@@ -1,0 +1,17 @@
+# AI Tutor .gitignore
+.env
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+logs/
+data/student_data/
+models/downloaded/
+.pytest_cache/
+.coverage
+htmlcov/
+.DS_Store
+Thumbs.db
+*.log

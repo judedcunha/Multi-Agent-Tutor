@@ -1,0 +1,25 @@
+{
+  "topic": "Introduction to Python Programming",
+  "level": "beginner",
+  "learning_style": "visual",
+  "lesson_plan": {
+    "duration": "45 minutes",
+    "objectives": [
+      "Understand what Python is and why it's useful",
+      "Write your first Python program",
+      "Learn about variables and basic data types"
+    ],
+    "activities": [
+      "Interactive Python demonstration",
+      "Hands-on coding exercises",
+      "Visual examples with code output"
+    ]
+  },
+  "practice_problems": [
+    {
+      "question": "Create a variable called 'name' and set it to your name",
+      "difficulty": "easy",
+      "hint": "Use quotes around text: name = 'Your Name'"
+    }
+  ]
+}
