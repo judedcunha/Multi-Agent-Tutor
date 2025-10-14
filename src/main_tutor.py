@@ -9,7 +9,7 @@ import uvicorn
 from dotenv import load_dotenv
 
 # Import the agent
-from src.agents.ai_tutor import UniversalAITutor, LearningProfile
+from agents.ai_tutor import UniversalAITutor, LearningProfile
 
 # Load environment variables
 load_dotenv()
@@ -131,6 +131,7 @@ async def teach_topic(request: TeachingRequest):
     """
     Main teaching endpoint 
     """
+    global ai_tutor 
     if not ai_tutor:
         logger.warning("AI Tutor not fully initialized, creating new instance...")
         ai_tutor = UniversalAITutor(use_local_model=request.student_level != "advanced")
@@ -172,6 +173,7 @@ async def ask_question(request: QuickQuestionRequest):
     """
     Q&A endpoint
     """
+    global ai_tutor  
     try:
         logger.info(f"Quick question: {request.question}")
         
@@ -218,6 +220,7 @@ async def assess_student(request: AssessmentRequest):
     """
     Assess student understanding and provide feedback
     """
+    global ai_tutor     
     try:
         if not ai_tutor:
             ai_tutor = UniversalAITutor(use_local_model=False)
@@ -247,6 +250,7 @@ async def demo_lesson():
     """
     Demo endpoint with a sample teaching session
     """
+    global ai_tutor 
     try:
         if not ai_tutor:
             ai_tutor = UniversalAITutor(use_local_model=False)
@@ -373,7 +377,7 @@ if __name__ == "__main__":
     print()
     
     uvicorn.run(
-        "src.main_tutor:app",
+        "main_tutor:app",
         host="0.0.0.0",
         port=8000,
         reload=True,
