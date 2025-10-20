@@ -1,0 +1,23 @@
+"""
+LLM Integration for Educational Content Generation
+"""
+
+from llm.educational_clients import (
+    EducationalLLMManager,
+    LESSON_EXPLANATION_TEMPLATE,
+    PRACTICE_PROBLEM_TEMPLATE,
+    ASSESSMENT_TEMPLATE,
+    MATH_TUTOR_TEMPLATE,
+    SCIENCE_TUTOR_TEMPLATE,
+    PROGRAMMING_TUTOR_TEMPLATE
+)
+
+__all__ = [
+    'EducationalLLMManager',
+    'LESSON_EXPLANATION_TEMPLATE',
+    'PRACTICE_PROBLEM_TEMPLATE',
+    'ASSESSMENT_TEMPLATE',
+    'MATH_TUTOR_TEMPLATE',
+    'SCIENCE_TUTOR_TEMPLATE',
+    'PROGRAMMING_TUTOR_TEMPLATE'
+]
