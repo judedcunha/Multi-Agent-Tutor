@@ -214,9 +214,14 @@ class EducationalLLMManager:
         Returns:
             Generated content as string
         """
+        import time
+        
         # Try OpenAI first
         if self.use_openai and self.openai_client:
             try:
+                start_time = time.time()
+                logger.debug(f"Sending request to OpenAI - Prompt length: {len(prompt)} chars")
+                
                 response = self.openai_client.chat.completions.create(
                     model=self.openai_model,
                     messages=[
@@ -227,7 +232,10 @@ class EducationalLLMManager:
                     max_tokens=max_tokens
                 )
                 content = response.choices[0].message.content
-                logger.info(f"Generated content using OpenAI ({len(content)} chars)")
+                elapsed = time.time() - start_time
+                
+                logger.info(f"OpenAI success - Time: {elapsed:.2f}s, Length: {len(content)} chars")
+                logger.debug(f"Response preview: {content[:200]}...")
                 return content
             except Exception as e:
                 logger.error(f"OpenAI generation failed: {e}")
@@ -236,6 +244,9 @@ class EducationalLLMManager:
         # Try Ollama as fallback
         if self.use_ollama and self.ollama_client:
             try:
+                start_time = time.time()
+                logger.debug(f"Sending request to Ollama - Prompt length: {len(prompt)} chars")
+                
                 response = self.ollama_client.generate(
                     model=self.ollama_model,
                     prompt=prompt,
@@ -245,7 +256,10 @@ class EducationalLLMManager:
                     }
                 )
                 content = response['response']
-                logger.info(f"Generated content using Ollama ({len(content)} chars)")
+                elapsed = time.time() - start_time
+                
+                logger.info(f"Ollama success - Time: {elapsed:.2f}s, Length: {len(content)} chars")
+                logger.debug(f"Response preview: {content[:200]}...")
                 return content
             except Exception as e:
                 logger.error(f"Ollama generation failed: {e}")
@@ -305,7 +319,8 @@ For help, see the documentation or contact support."""
         topic: str,
         level: str = "beginner",
         count: int = 5,
-        difficulty_progression: bool = True
+        difficulty_progression: bool = True,
+        max_retries: int = 2
     ) -> List[Dict[str, Any]]:
         """
         Generate practice problems for a topic
@@ -315,23 +330,42 @@ For help, see the documentation or contact support."""
             level: Difficulty level
             count: Number of problems to generate
             difficulty_progression: Whether problems should increase in difficulty
+            max_retries: Maximum retry attempts if generation fails
             
         Returns:
             List of problem dictionaries
         """
         logger.info(f"Generating {count} practice problems for: {topic}")
         
-        prompt = PRACTICE_PROBLEM_TEMPLATE.format(
-            topic=topic,
-            level=level,
-            count=count,
-            progressive=difficulty_progression
-        )
+        for attempt in range(max_retries):
+            logger.debug(f"Attempt {attempt + 1}/{max_retries}")
+            
+            prompt = PRACTICE_PROBLEM_TEMPLATE.format(
+                topic=topic,
+                level=level,
+                count=count,
+                progressive=difficulty_progression
+            )
+            
+            content = await self.generate_content(prompt, temperature=0.8, max_tokens=2000)
+            
+            # Log raw output for debugging
+            logger.debug(f"Raw LLM output:\n{content[:500]}...")
+            
+            # Parse the response into structured problems
+            problems = self._parse_practice_problems(content, count)
+            
+            # Validate all problems have proper text
+            valid_count = sum(1 for p in problems if p.get('text') and len(p['text']) > 10)
+            
+            if valid_count >= count:
+                logger.info(f"Successfully generated {valid_count} valid problems")
+                return problems
+            else:
+                logger.warning(f"Only {valid_count}/{count} problems are valid, retrying...")
+                if attempt == max_retries - 1:
+                    logger.error(f"Max retries reached, returning {valid_count} problems")
         
-        content = await self.generate_content(prompt, temperature=0.8, max_tokens=2000)
-        
-        # Parse the response into structured problems
-        problems = self._parse_practice_problems(content, count)
         return problems
     
     def _parse_practice_problems(self, content: str, expected_count: int) -> List[Dict[str, Any]]:
@@ -340,29 +374,125 @@ For help, see the documentation or contact support."""
         lines = content.split('\n')
         
         current_problem = {}
+        current_section = None
+        text_buffer = []
+        
+        # Track problem number to know when we've moved to a new problem
+        current_problem_num = 0
+        
         for line in lines:
-            line = line.strip()
-            if line.startswith('Problem'):
-                if current_problem:
+            line_stripped = line.strip()
+            
+            # Skip empty lines unless we're in text accumulation
+            if not line_stripped:
+                if current_section == 'text' and text_buffer:
+                    # Empty line might end the text section
+                    continue
+                else:
+                    continue
+            
+            line_lower = line_stripped.lower()
+            
+            # Start of a new problem (detect "Problem N" or just "Problem")
+            if line_lower.startswith('problem'):
+                # Save previous problem if exists
+                if current_problem and text_buffer:
+                    current_problem['text'] = ' '.join(text_buffer).strip()
+                
+                if current_problem and current_problem.get('text'):
                     problems.append(current_problem)
-                current_problem = {'text': line.split(':', 1)[1].strip() if ':' in line else line}
-            elif line.startswith('Hint:'):
-                current_problem['hint'] = line.split(':', 1)[1].strip()
-            elif line.startswith('Difficulty:'):
-                current_problem['difficulty'] = line.split(':', 1)[1].strip().lower()
+                
+                # Initialize new problem
+                current_problem = {}
+                text_buffer = []
+                current_section = 'text'
+                current_problem_num += 1
+                
+                # Extract inline problem text if present (e.g., "Problem 1: Solve this...")
+                if ':' in line_stripped:
+                    problem_text = line_stripped.split(':', 1)[1].strip()
+                    if problem_text and not problem_text.startswith('[') and len(problem_text) > 3:
+                        text_buffer.append(problem_text)
+            
+            # Difficulty section (can appear before OR after problem text)
+            elif line_lower.startswith('difficulty:'):
+                # Save accumulated text before switching sections
+                if text_buffer and current_section == 'text':
+                    current_problem['text'] = ' '.join(text_buffer).strip()
+                    text_buffer = []
+                
+                difficulty = line_stripped.split(':', 1)[1].strip().lower()
+                # Extract just the difficulty word
+                for diff_word in ['easy', 'medium', 'hard']:
+                    if diff_word in difficulty:
+                        current_problem['difficulty'] = diff_word
+                        break
+                current_section = 'difficulty'
+            
+            # Hint section
+            elif line_lower.startswith('hint:'):
+                # Save accumulated text before switching sections
+                if text_buffer and current_section == 'text':
+                    current_problem['text'] = ' '.join(text_buffer).strip()
+                    text_buffer = []
+                
+                current_problem['hint'] = line_stripped.split(':', 1)[1].strip()
+                current_section = 'hint'
+            
+            # Continue accumulating text for current section
+            elif current_section == 'text':
+                # Don't add lines that look like markers
+                if not (line_stripped.startswith('[') or line_stripped.startswith('---') or
+                        line_stripped.startswith('###')):
+                    text_buffer.append(line_stripped)
         
+        # Don't forget the last problem
         if current_problem:
-            problems.append(current_problem)
+            if text_buffer and current_section == 'text':
+                current_problem['text'] = ' '.join(text_buffer).strip()
+            if current_problem.get('text'):
+                problems.append(current_problem)
         
-        # Fill in any missing problems with basic structure
-        while len(problems) < expected_count:
-            problems.append({
-                'text': f"Practice problem {len(problems) + 1}",
+        logger.debug(f"Parser detected {len(problems)} raw problems from output")
+        
+        # Validate and clean up problems
+        validated_problems = []
+        for i, problem in enumerate(problems):
+            # Must have text with minimum length
+            if not problem.get('text') or len(problem['text']) < 5:
+                logger.warning(f"Problem {i+1} has invalid/missing text")
+                continue
+            
+            # Check for placeholders
+            if problem['text'].startswith('[') or 'placeholder' in problem['text'].lower():
+                logger.warning(f"Problem {i+1} appears to be a placeholder")
+                continue
+            
+            # Add default hint if missing
+            if not problem.get('hint'):
+                problem['hint'] = "Review the main concepts from the lesson and apply them step by step."
+            
+            # Add default difficulty if missing (progressive)
+            if not problem.get('difficulty'):
+                if i < expected_count // 3:
+                    problem['difficulty'] = 'easy'
+                elif i < 2 * expected_count // 3:
+                    problem['difficulty'] = 'medium'
+                else:
+                    problem['difficulty'] = 'hard'
+            
+            validated_problems.append(problem)
+        
+        # Fill in any missing problems with fallback
+        while len(validated_problems) < expected_count:
+            validated_problems.append({
+                'text': f"Additional practice problem {len(validated_problems) + 1}: Apply what you've learned.",
                 'hint': "Think about the key concepts from the lesson",
                 'difficulty': 'medium'
             })
         
-        return problems[:expected_count]
+        logger.info(f"Parsed {len(validated_problems)} valid problems out of {len(problems)} detected")
+        return validated_problems[:expected_count]
     
     async def assess_student_response(
         self,
