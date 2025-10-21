@@ -7,6 +7,7 @@ import sys
 import os
 from pathlib import Path
 import asyncio
+from typing import Dict, Any, List
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
@@ -22,6 +23,56 @@ def print_section(title):
 def print_subsection(title):
     """Print a formatted subsection"""
     print(f"\n--- {title} ---\n")
+
+
+def validate_practice_problems(problems: List[Dict], topic: str) -> Dict[str, Any]:
+    """
+    Comprehensive validation for practice problems 
+    
+    Returns:
+        Dict with 'valid', 'issues', and 'details' keys
+    """
+    issues = []
+    details = {
+        'total': len(problems),
+        'valid': 0,
+        'invalid': 0,
+        'missing_fields': []
+    }
+    
+    for i, problem in enumerate(problems, 1):
+        problem_issues = []
+        
+        # Check for text field
+        if not problem.get('text'):
+            problem_issues.append(f"Problem {i}: Missing 'text' field")
+        elif len(problem['text'].strip()) < 10:
+            problem_issues.append(f"Problem {i}: Text too short ({len(problem['text'])} chars)")
+        elif problem['text'].startswith('[') or 'placeholder' in problem['text'].lower():
+            problem_issues.append(f"Problem {i}: Text appears to be a placeholder")
+        
+        # Check for hint
+        if not problem.get('hint'):
+            problem_issues.append(f"Problem {i}: Missing 'hint' field")
+        
+        # Check for difficulty
+        if not problem.get('difficulty'):
+            problem_issues.append(f"Problem {i}: Missing 'difficulty' field")
+        elif problem['difficulty'] not in ['easy', 'medium', 'hard']:
+            problem_issues.append(f"Problem {i}: Invalid difficulty '{problem['difficulty']}'")
+        
+        if problem_issues:
+            issues.extend(problem_issues)
+            details['invalid'] += 1
+            details['missing_fields'].append(i)
+        else:
+            details['valid'] += 1
+    
+    return {
+        'valid': len(issues) == 0,
+        'issues': issues,
+        'details': details
+    }
 
 
 async def demo_llm_manager():
@@ -85,13 +136,24 @@ async def demo_llm_manager():
             print("-" * 70)
             for i, problem in enumerate(problems, 1):
                 print(f"\nProblem {i}:")
-                print(f"  Text: {problem.get('text', 'N/A')}")
+                text = problem.get('text', 'N/A')
+                print(f"  Text: {text[:150]}..." if len(text) > 150 else f"  Text: {text}")
                 if 'hint' in problem:
-                    print(f"  Hint: {problem['hint']}")
+                    hint = problem['hint']
+                    print(f"  Hint: {hint[:100]}..." if len(hint) > 100 else f"  Hint: {hint}")
                 if 'difficulty' in problem:
                     print(f"  Difficulty: {problem['difficulty']}")
             print("-" * 70)
-            print(f"PASS: Generated {len(problems)} practice problems")
+            
+            # Validate quality 
+            validation = validate_practice_problems(problems, "Basic algebra")
+            if validation['valid']:
+                print(f"PASS: Generated {validation['details']['valid']}/{validation['details']['total']} complete practice problems")
+            else:
+                print(f"FAIL: Quality issues found:")
+                for issue in validation['issues']:
+                    print(f"    - {issue}")
+                print(f"  Valid: {validation['details']['valid']}/{validation['details']['total']}")
         except Exception as e:
             print(f"FAIL: Failed to generate problems: {e}")
         
