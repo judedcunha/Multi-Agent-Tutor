@@ -61,8 +61,17 @@ class EducationalRAG:
             # Initialize embedder
             try:
                 from sentence_transformers import SentenceTransformer
-                self.embedder = SentenceTransformer('all-MiniLM-L6-v2')
-                logger.info("Initialized sentence transformer embedder")
+                
+                # Import device detection
+                try:
+                    from utils.device_config import get_optimal_device
+                    device = get_optimal_device()
+                except ImportError:
+                    logger.warning("device_config not available, using cpu")
+                    device = 'cpu'
+                
+                self.embedder = SentenceTransformer('all-MiniLM-L6-v2', device=device)
+                logger.info(f"Initialized sentence transformer embedder on {device.upper()}")
                 self.initialized = True
             except ImportError:
                 logger.warning("sentence-transformers not installed - semantic search limited")
@@ -355,20 +364,52 @@ class EducationalReranker:
         
         try:
             from sentence_transformers import CrossEncoder
-            self.cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+            try:
+                from utils.device_config import get_optimal_device
+                device = get_optimal_device()
+            except ImportError:
+                logger.warning("device_config not available, using cpu")
+                device = 'cpu'
+            
+            self.cross_encoder = CrossEncoder(
+                'cross-encoder/ms-marco-MiniLM-L-6-v2',
+                device=device
+            )
             self.initialized = True
-            logger.info("Educational reranker initialized")
+            logger.info(f"Educational reranker initialized on {device.upper()}")
         except ImportError:
             logger.warning("sentence-transformers not available - reranking limited")
         except Exception as e:
             logger.error(f"Failed to initialize reranker: {e}")
+    
+    def _normalize_scores(self, scores) -> list:
+        """
+        Normalize cross-encoder scores to 0-1 range using sigmoid 
+        Makes negative scores interpretable as low relevance
+        
+        Args:
+            scores: Raw cross-encoder scores (logits)
+            
+        Returns:
+            List of normalized scores between 0 and 1
+        """
+        import math
+        
+        # Convert to list if numpy array
+        if hasattr(scores, 'tolist'):
+            scores = scores.tolist()
+        
+        # Apply sigmoid normalization: 1 / (1 + e^(-x))
+        normalized = [1 / (1 + math.exp(-score)) for score in scores]
+        return normalized
     
     def rerank_for_learning(
         self,
         candidates: List[Dict[str, Any]],
         query: str,
         student_level: Optional[str] = None,
-        top_k: Optional[int] = None
+        top_k: Optional[int] = None,
+        normalize: bool = True
     ) -> List[Dict[str, Any]]:
         """
         Re-rank results for educational relevance
@@ -378,6 +419,7 @@ class EducationalReranker:
             query: Original query
             student_level: Student's level for filtering
             top_k: Number of results to return
+            normalize: Whether to normalize scores to 0-1 range (recommended)
             
         Returns:
             Re-ranked list of results
@@ -394,12 +436,23 @@ class EducationalReranker:
                 for candidate in candidates
             ]
             
-            # Score with cross-encoder
+            # Score with cross-encoder (returns raw logits)
             scores = self.cross_encoder.predict(pairs)
             
+            # Log raw score range for debugging
+            logger.debug(f"Raw score range: [{min(scores):.3f}, {max(scores):.3f}]")
+            
+            # Normalize scores if requested 
+            if normalize:
+                normalized_scores = self._normalize_scores(scores)
+                logger.debug(f"Normalized score range: [{min(normalized_scores):.3f}, {max(normalized_scores):.3f}]")
+            else:
+                normalized_scores = scores
+            
             # Update candidates with new scores
-            for candidate, score in zip(candidates, scores):
-                candidate['rerank_score'] = float(score)
+            for candidate, raw_score, norm_score in zip(candidates, scores, normalized_scores):
+                candidate['rerank_score'] = float(norm_score)
+                candidate['rerank_score_raw'] = float(raw_score)  # Keep raw for debugging
             
             # Filter by level if specified
             if student_level:
