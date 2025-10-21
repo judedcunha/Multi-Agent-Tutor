@@ -2,6 +2,7 @@
 import os
 import logging
 from typing import Dict, Any, Optional, List
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -23,11 +24,41 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# FastAPI app
+# Global instances
+ai_tutor = None
+advanced_system = None
+active_students = {}  # Store learning profiles
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for startup and shutdown events
+    Modern replacement for @app.on_event
+    """
+    # Startup
+    global ai_tutor, advanced_system
+    logger.info("Starting up AI Tutor system...")
+    
+    try:
+        ai_tutor = UniversalAITutor(use_local_model=True)
+        advanced_system = AdvancedTutoringSystem(use_local_model=False)
+        logger.info("AI Tutor system initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize tutoring systems: {str(e)}")
+        # Don't raise - allow app to start in degraded mode
+    
+    yield  # Server runs here
+    
+    # Shutdown (cleanup if needed)
+    logger.info("✓ Shutting down AI Tutor system...")
+    # Add cleanup code here if needed (close connections, save state, etc.)
+
+# FastAPI app with lifespan
 app = FastAPI(
     title="AI Tutor",
     description="Advanced multi-agent educational tutoring platform with LangGraph orchestration",
-    version="1"
+    version="1",
+    lifespan=lifespan
 )
 
 # Request/Response models
@@ -79,22 +110,6 @@ class QuestionResponse(BaseModel):
     answer: Dict[str, Any]
     follow_up_suggestions: List[str]
     cost: str = "0"
-
-# Global instances
-ai_tutor = None
-advanced_system = None
-active_students = {}  # Store learning profiles
-
-@app.on_event("startup")
-async def startup_event():
-    global ai_tutor, advanced_system
-    
-    try:
-        ai_tutor = UniversalAITutor(use_local_model=True)
-        advanced_system = AdvancedTutoringSystem(use_local_model=False)
-        
-    except Exception as e:
-        logger.error(f"Failed to initialize tutoring systems: {str(e)}")
 
 @app.get("/", response_class=HTMLResponse)
 async def welcome_page():
