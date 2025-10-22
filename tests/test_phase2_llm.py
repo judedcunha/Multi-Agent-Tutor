@@ -34,13 +34,10 @@ class TestPhase2LLM:
         try:
             from llm.educational_clients import create_llm_manager
             
-            # Skip if no API keys available
-            if not os.getenv('OPENAI_API_KEY') or os.getenv('OPENAI_API_KEY') == 'your_key_here':
-                pytest.skip("OpenAI API key not configured")
-            
+            # Create manager first, then check if any provider is available
             llm = create_llm_manager()
             if not llm.use_openai and not llm.use_ollama:
-                pytest.skip("No LLM service available")
+                pytest.skip("No LLM service available (neither OpenAI nor Ollama)")
             
             explanation = await llm.create_lesson_explanation(
                 topic="Python lists",
@@ -61,12 +58,10 @@ class TestPhase2LLM:
         try:
             from llm.educational_clients import create_llm_manager
             
-            if not os.getenv('OPENAI_API_KEY') or os.getenv('OPENAI_API_KEY') == 'your_key_here':
-                pytest.skip("OpenAI API key not configured")
-            
+            # Create manager first, then check if any provider is available
             llm = create_llm_manager()
             if not llm.use_openai and not llm.use_ollama:
-                pytest.skip("No LLM service available")
+                pytest.skip("No LLM service available (neither OpenAI nor Ollama)")
             
             problems = await llm.generate_practice_problems(
                 topic="Algebra equations",
@@ -75,7 +70,11 @@ class TestPhase2LLM:
             )
             
             assert len(problems) >= 1  # At least one problem
-            assert all('text' in p or 'problem' in p.get('text', '') for p in problems)
+            # Check that each problem has a non-empty 'text' field
+            for problem in problems:
+                assert 'text' in problem, f"Problem missing 'text' field: {problem}"
+                assert isinstance(problem['text'], str), f"Problem 'text' is not a string: {problem}"
+                assert len(problem['text'].strip()) > 0, f"Problem 'text' field is empty: {problem}"
             print("Practice problem generation test passed")
             
         except ImportError:
@@ -290,13 +289,22 @@ class TestPhase2Integration:
             )
             
             assert system is not None
-            assert hasattr(system, 'llm_manager')
-            assert hasattr(system, 'specialized_agents')
-            assert hasattr(system, 'rag_system')
             
+            # Get system status and check feature flags
             status = system.get_system_status()
-            assert 'phase' in status
-            assert 'features' in status
+            assert 'phase' in status, "Status missing 'phase' field"
+            assert 'features' in status, "Status missing 'features' field"
+            
+            # Check that features dict contains expected flags
+            features = status['features']
+            assert 'llm_manager' in features, "Features missing 'llm_manager' flag"
+            assert 'specialized_agents' in features, "Features missing 'specialized_agents' flag"
+            assert 'rag_system' in features, "Features missing 'rag_system' flag"
+            
+            # Verify expected states based on initialization parameters
+            assert features['llm_manager'] == False, "LLM manager should be disabled"
+            assert features['specialized_agents'] == True, "Specialized agents should be enabled"
+            assert features['rag_system'] == False, "RAG system should be disabled"
             
             print("Advanced tutoring system Phase 2 integration test passed")
             

@@ -5,9 +5,83 @@ Provides comprehensive logging for debugging and monitoring
 
 import logging
 import sys
+import os
+import re
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+
+
+class SensitiveDataFilter(logging.Filter):
+    """Filter to redact sensitive information from logs"""
+    
+    def __init__(self, enable_full_logging: bool = False):
+        """
+        Initialize the sensitive data filter
+        
+        Args:
+            enable_full_logging: If True, disable redaction (for debugging only)
+        """
+        super().__init__()
+        self.enable_full_logging = enable_full_logging
+        
+        # Collect API keys and secrets from environment
+        self.secrets = []
+        sensitive_env_vars = [
+            'OPENAI_API_KEY',
+            'ANTHROPIC_API_KEY',
+            'HUGGINGFACE_API_KEY',
+            'AWS_SECRET_ACCESS_KEY',
+            'AWS_ACCESS_KEY_ID',
+        ]
+        
+        for var in sensitive_env_vars:
+            value = os.getenv(var)
+            if value and value not in ['', 'your_key_here', 'None']:
+                self.secrets.append(value)
+    
+    def filter(self, record: logging.LogRecord) -> bool:
+        """
+        Filter log records to redact sensitive information
+        
+        Args:
+            record: The log record to filter
+            
+        Returns:
+            True to allow the record through, False to block it
+        """
+        # If full logging is enabled, don't redact
+        if self.enable_full_logging:
+            return True
+        
+        # Redact message
+        if hasattr(record, 'msg') and isinstance(record.msg, str):
+            for secret in self.secrets:
+                if secret in record.msg:
+                    record.msg = record.msg.replace(secret, '***REDACTED***')
+        
+        # Redact args (used in formatted messages)
+        if hasattr(record, 'args') and record.args:
+            if isinstance(record.args, dict):
+                redacted_args = {}
+                for key, value in record.args.items():
+                    if isinstance(value, str):
+                        for secret in self.secrets:
+                            if secret in value:
+                                value = value.replace(secret, '***REDACTED***')
+                    redacted_args[key] = value
+                record.args = redacted_args
+            elif isinstance(record.args, (list, tuple)):
+                redacted_args = []
+                for arg in record.args:
+                    if isinstance(arg, str):
+                        for secret in self.secrets:
+                            if secret in arg:
+                                arg = arg.replace(secret, '***REDACTED***')
+                    redacted_args.append(arg)
+                record.args = tuple(redacted_args) if isinstance(record.args, tuple) else redacted_args
+        
+        return True
 
 
 def setup_logging(
@@ -16,7 +90,8 @@ def setup_logging(
     enable_file_logging: bool = True,
     enable_console: bool = True,
     log_llm_requests: bool = False,
-    log_api_requests: bool = False
+    log_api_requests: bool = False,
+    enable_full_llm_logging: bool = False
 ) -> logging.Logger:
     """
     Setup comprehensive logging
@@ -28,6 +103,7 @@ def setup_logging(
         enable_console: Whether to log to console
         log_llm_requests: Whether to log full LLM requests/responses
         log_api_requests: Whether to log API requests
+        enable_full_llm_logging: Whether to log full unredacted LLM bodies (DEBUG ONLY)
         
     Returns:
         Configured logger instance
@@ -78,6 +154,15 @@ def setup_logging(
         llm_logger.addHandler(llm_handler)
         llm_logger.setLevel(logging.DEBUG)
         llm_logger.propagate = False  # Don't propagate to root
+        
+        # Add sensitive data filter (redacts by default unless full logging enabled)
+        sensitive_filter = SensitiveDataFilter(enable_full_logging=enable_full_llm_logging)
+        llm_logger.addFilter(sensitive_filter)
+        
+        if enable_full_llm_logging:
+            logging.warning("Full unredacted LLM logging is ENABLED - sensitive data will be logged!")
+        else:
+            logging.info("LLM logging configured with sensitive data redaction")
     
     # API request logger
     if log_api_requests:

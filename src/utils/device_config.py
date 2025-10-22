@@ -16,8 +16,6 @@ def get_optimal_device() -> str:
     Returns:
         Device string: 'cuda', or 'cpu'
     """
-
-    import torch
     
     # Check for GPU
     if torch.cuda.is_available():
@@ -39,10 +37,12 @@ def get_optimal_device() -> str:
 
 def get_device_info() -> dict:
     """Get detailed device information"""
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
     info = {
-        'device': get_optimal_device(),
+        'device': device,
         'cpu_count': torch.get_num_threads(),
-        'gpu_available': torch.cuda.is_available() if hasattr(torch, 'cuda') else False
+        'gpu_available': torch.cuda.is_available()
     }
     
     if info['gpu_available']:

@@ -108,6 +108,7 @@ class EducationalRAG:
             return False
         
         try:
+            import asyncio
             logger.info(f"Indexing {len(content_list)} educational resources")
             
             # Prepare documents
@@ -120,8 +121,9 @@ class EducationalRAG:
                 metadatas.append(content.get('metadata', {}))
                 ids.append(content.get('id', f"doc_{idx}"))
             
-            # Add to collection
-            self.collection.add(
+            # Add to collection - wrap blocking call in thread pool
+            await asyncio.to_thread(
+                self.collection.add,
                 documents=documents,
                 metadatas=metadatas,
                 ids=ids
@@ -158,6 +160,7 @@ class EducationalRAG:
             return []
         
         try:
+            import asyncio
             logger.info(f"Retrieving educational content for: {query}")
             
             # Build where clause for filtering (ChromaDB format)
@@ -174,8 +177,9 @@ class EducationalRAG:
             elif student_level:
                 where_clause = {"level": {"$eq": student_level}}
             
-            # Query the collection
-            results = self.collection.query(
+            # Query the collection - wrap blocking call in thread pool
+            results = await asyncio.to_thread(
+                self.collection.query,
                 query_texts=[query],
                 n_results=top_k,
                 where=where_clause

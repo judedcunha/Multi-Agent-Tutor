@@ -215,6 +215,7 @@ class EducationalLLMManager:
             Generated content as string
         """
         import time
+        import asyncio
         
         # Try OpenAI first
         if self.use_openai and self.openai_client:
@@ -222,16 +223,20 @@ class EducationalLLMManager:
                 start_time = time.time()
                 logger.debug(f"Sending request to OpenAI - Prompt length: {len(prompt)} chars")
                 
-                response = self.openai_client.chat.completions.create(
-                    model=self.openai_model,
-                    messages=[
-                        {"role": "system", "content": "You are an expert educational tutor."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=temperature,
-                    max_tokens=max_tokens
-                )
-                content = response.choices[0].message.content
+                # Run blocking OpenAI call in thread pool
+                def _call_openai():
+                    response = self.openai_client.chat.completions.create(
+                        model=self.openai_model,
+                        messages=[
+                            {"role": "system", "content": "You are an expert educational tutor."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        temperature=temperature,
+                        max_tokens=max_tokens
+                    )
+                    return response.choices[0].message.content
+                
+                content = await asyncio.to_thread(_call_openai)
                 elapsed = time.time() - start_time
                 
                 logger.info(f"OpenAI success - Time: {elapsed:.2f}s, Length: {len(content)} chars")
@@ -247,15 +252,19 @@ class EducationalLLMManager:
                 start_time = time.time()
                 logger.debug(f"Sending request to Ollama - Prompt length: {len(prompt)} chars")
                 
-                response = self.ollama_client.generate(
-                    model=self.ollama_model,
-                    prompt=prompt,
-                    options={
-                        "temperature": temperature,
-                        "num_predict": max_tokens
-                    }
-                )
-                content = response['response']
+                # Run blocking Ollama call in thread pool
+                def _call_ollama():
+                    response = self.ollama_client.generate(
+                        model=self.ollama_model,
+                        prompt=prompt,
+                        options={
+                            "temperature": temperature,
+                            "num_predict": max_tokens
+                        }
+                    )
+                    return response['response']
+                
+                content = await asyncio.to_thread(_call_ollama)
                 elapsed = time.time() - start_time
                 
                 logger.info(f"Ollama success - Time: {elapsed:.2f}s, Length: {len(content)} chars")

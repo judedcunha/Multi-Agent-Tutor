@@ -10,7 +10,6 @@ pydantic>=2.5.0          # data validation
 
 # Educational Content Sources 
 duckduckgo-search>=3.9.0  # educational web search 
-wikipedia-api>=0.6.0      # encyclopedia access 
 requests>=2.31.0         
 beautifulsoup4>=4.12.0   
 wikipedia
@@ -36,10 +35,10 @@ nest-asyncio>=1.5.0      # Nested event loop support
 # Phase 1: Multi-Agent Orchestration
 langgraph>=0.0.40        # Multi-agent orchestration
 langsmith>=0.0.60        # Monitoring and tracing
-langchain>=0.1.0         # LangChain core
-langchain-openai>=0.1.0  # OpenAI integration
-langchain-community>=0.0.38  # Community integrations
-langchain-core>=0.1.0    # Core abstractions
+langchain>=1.0.0         # LangChain core 
+langchain-openai>=1.0.0  # OpenAI integration 
+langchain-community>=0.3.27  # Community integrations
+langchain-core>=1.0.0    # Core abstractions 
 
 # LLM Integration
 openai>=1.0.0           # OpenAI GPT-4
