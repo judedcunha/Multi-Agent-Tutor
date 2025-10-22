@@ -431,7 +431,6 @@ Multi-Agent-Tutor/
 ├── tests/
 │   ├── test_educational_system.py   # Phase 1 tests
 │   └── test_phase2_llm.py          # Phase 2 tests
-started guide
 ├── README.md                        # This file
 ├── requirements.txt                 # Dependencies
 ├── .env.example                     # Configuration template
