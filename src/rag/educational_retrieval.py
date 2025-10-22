@@ -278,8 +278,11 @@ class EducationalRAG:
         Returns:
             List of combined search results
         """
-        logger.info(f"Performing hybrid search for: {query}")
-        
+        """
+        TODO: Implement true hybrid search once keyword/BM25 search is available
+        Currently falls back to semantic search only
+        """
+        logger.warning("Hybrid search not yet implemented - using semantic search")        
         try:
             # Get semantic results
             semantic_results = await self.semantic_search(query, top_k=top_k * 2)
