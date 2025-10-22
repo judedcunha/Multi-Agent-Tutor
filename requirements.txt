@@ -10,7 +10,6 @@ pydantic>=2.5.0          # data validation
 
 # Educational Content Sources 
 duckduckgo-search>=3.9.0  # educational web search 
-wikipedia-api>=0.6.0      # encyclopedia access 
 requests>=2.31.0         
 beautifulsoup4>=4.12.0   
 wikipedia
@@ -25,29 +24,39 @@ streamlit>=1.28.0
 jupyter>=1.0.0           
 
 # Testing 
-pytest>=7.4.0            
+pytest>=7.4.0
+pytest-asyncio>=0.21.0   # Async test support
 black>=23.0.0            # code formatting
 flake8>=6.0.0            # code quality
 
+# Async Support
+nest-asyncio>=1.5.0      # Nested event loop support
+
+# Phase 1: Multi-Agent Orchestration
 langgraph>=0.0.40        # Multi-agent orchestration
 langsmith>=0.0.60        # Monitoring and tracing
-langchain>=0.1.0         # LangChain core
-langchain-openai>=0.1.0  # OpenAI integration
-langchain-community>=0.0.38  # Community integrations
-langchain-core>=0.1.0    # Core abstractions
+langchain>=1.0.0         # LangChain core 
+langchain-openai>=1.0.0  # OpenAI integration 
+langchain-community>=0.3.27  # Community integrations
+langchain-core>=1.0.0    # Core abstractions 
 
-# PHASE 2: Advanced RAG (To be added) 
-# chromadb>=0.4.15
-# sentence-transformers>=2.2.2
-# rank-bm25>=0.2.2
+# LLM Integration
+openai>=1.0.0           # OpenAI GPT-4
+ollama>=0.1.0           # Local model fallback
 
-# PHASE 2: Educational Content Enhancement (To be added) 
-# sympy>=1.12              # Math equation solving
-# matplotlib>=3.7.0        # Math visualizations
-# plotly>=5.17.0           # Interactive charts
+# RAG
+chromadb>=0.4.15                 # Vector database
+sentence-transformers>=2.2.2     # Embeddings & Re-ranking
+rank-bm25>=0.2.2                 # BM25 keyword search
+
+# Educational Enhancement 
+sympy>=1.12              # Symbolic math for Math Tutor
+matplotlib>=3.7.0        # Visualizations
+plotly>=5.17.0          # Interactive charts
 
 # PHASE 3: Production Infrastructure (To be added) 
 # redis>=5.0.0
 # psycopg2-binary>=2.9.0
 # sqlalchemy>=2.0.0
 # alembic>=1.12.0
+# websockets>=11.0

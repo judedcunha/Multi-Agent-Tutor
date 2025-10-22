@@ -1,10 +1,12 @@
 """
 Multi-Agent Tutoring System using LangGraph
 Main orchestration graph that coordinates all educational agents
+LLM Integration & Specialized Agents
 """
 
+import os
 import logging
-from typing import Dict, Any, Literal
+from typing import Dict, Any, Literal, Optional
 from datetime import datetime
 import uuid
 
@@ -16,6 +18,28 @@ from agents.educational_nodes import EducationalNodes, create_educational_nodes
 from agents.ai_tutor import UniversalAITutor
 
 logger = logging.getLogger(__name__)
+
+# Import new components 
+try:
+    from llm.educational_clients import create_llm_manager
+    LLM_AVAILABLE = True
+except ImportError:
+    logger.warning("LLM components not available - install with: pip install openai ollama")
+    LLM_AVAILABLE = False
+
+try:
+    from agents.subject_experts import create_specialized_agents
+    SPECIALIZED_AGENTS_AVAILABLE = True
+except ImportError:
+    logger.warning("Specialized agents not available")
+    SPECIALIZED_AGENTS_AVAILABLE = False
+
+try:
+    from rag.educational_retrieval import create_rag_system
+    RAG_AVAILABLE = True
+except ImportError:
+    logger.warning("RAG system not available - install with: pip install chromadb sentence-transformers")
+    RAG_AVAILABLE = False
 
 
 class AdvancedTutoringSystem:
@@ -38,20 +62,80 @@ class AdvancedTutoringSystem:
     - VisualContentAgent - Creates educational visualizations
     """
     
-    def __init__(self, use_local_model: bool = False):
+    def __init__(
+        self, 
+        use_local_model: bool = False,
+        enable_llm: bool = None,
+        enable_specialized_agents: bool = None,
+        enable_advanced_rag: bool = None
+    ):
         """
         Initialize the advanced tutoring system
         
         Args:
-            use_local_model: Whether to use local models (for Phase 2)
+            use_local_model: Whether to use local models
+            enable_llm: Enable LLM features (Phase 2)
+            enable_specialized_agents: Enable specialized subject agents (Phase 2)
+            enable_advanced_rag: Enable advanced RAG (Phase 2)
         """
         self.use_local_model = use_local_model
+        
+        # Phase 2 feature flags
+        if enable_llm is None:
+            enable_llm = os.getenv('USE_OPENAI', 'true').lower() == 'true' or os.getenv('USE_OLLAMA', 'true').lower() == 'true'
+        if enable_specialized_agents is None:
+            enable_specialized_agents = os.getenv('USE_SPECIALIZED_AGENTS', 'true').lower() == 'true'
+        if enable_advanced_rag is None:
+            enable_advanced_rag = os.getenv('USE_ADVANCED_RAG', 'true').lower() == 'true'
+        
+        self.enable_llm = enable_llm and LLM_AVAILABLE
+        self.enable_specialized_agents = enable_specialized_agents and SPECIALIZED_AGENTS_AVAILABLE
+        self.enable_advanced_rag = enable_advanced_rag and RAG_AVAILABLE
         
         # Initialize the base tutor (preserves existing functionality)
         self.tutor = UniversalAITutor(use_local_model=use_local_model)
         
-        # Create educational nodes
-        self.nodes = create_educational_nodes(self.tutor)
+        # Phase 2: Initialize LLM Manager
+        self.llm_manager = None
+        if self.enable_llm:
+            try:
+                self.llm_manager = create_llm_manager()
+                logger.info("Phase 2: LLM Manager initialized")
+            except Exception as e:
+                logger.warning(f"Phase 2: LLM Manager failed to initialize: {e}")
+                self.enable_llm = False
+        
+        # Phase 2: Initialize Specialized Agents
+        self.specialized_agents = None
+        if self.enable_specialized_agents:
+            try:
+                self.specialized_agents = create_specialized_agents(self.llm_manager)
+                logger.info("Phase 2: Specialized agents initialized")
+            except Exception as e:
+                logger.warning(f"Phase 2: Specialized agents failed: {e}")
+                self.enable_specialized_agents = False
+        
+        # Phase 2: Initialize RAG System
+        self.rag_system = None
+        self.reranker = None
+        if self.enable_advanced_rag:
+            try:
+                self.rag_system, self.reranker = create_rag_system()
+                logger.info("Phase 2: Advanced RAG system initialized")
+            except Exception as e:
+                logger.warning(f"Phase 2: RAG system failed: {e}")
+                self.enable_advanced_rag = False
+        
+        # Validate configuration AFTER initialization
+        self._validate_configuration(enable_llm, enable_specialized_agents, enable_advanced_rag)
+        
+        # Create educational nodes (pass Phase 2 components)
+        self.nodes = create_educational_nodes(
+            self.tutor,
+            llm_manager=self.llm_manager,
+            specialized_agents=self.specialized_agents,
+            rag_system=self.rag_system
+        )
         
         # Build the tutoring graph
         self.graph = self._create_tutoring_graph()
@@ -59,7 +143,92 @@ class AdvancedTutoringSystem:
         # Compile the graph
         self.compiled_graph = self.graph.compile()
         
-        logger.info("🎓 Advanced Tutoring System initialized with LangGraph")
+        phase_features = []
+        if self.enable_llm:
+            phase_features.append("LLM")
+        if self.enable_specialized_agents:
+            phase_features.append("Specialized Agents")
+        if self.enable_advanced_rag:
+            phase_features.append("Advanced RAG")
+        
+        phase_status = " + ".join(phase_features) if phase_features else "Phase 1 Only"
+        logger.info(f"Advanced Tutoring System initialized ({phase_status})")
+    
+    def _validate_configuration(self, requested_llm, requested_agents, requested_rag):
+        """
+        Validate that requested Phase 2 features are available.
+        Fail fast with clear error messages if misconfigured.
+        """
+        errors = []
+        
+        # Check LLM availability
+        if requested_llm:
+            if not LLM_AVAILABLE:
+                errors.append(
+                    "LLM features requested but dependencies not installed.\n"
+                    "  Install with: pip install openai ollama"
+                )
+            elif not self.enable_llm:
+                # Was requested but failed to enable
+                errors.append(
+                    "LLM features requested but initialization failed.\n"
+                    "  Check logs above for specific error."
+                )
+            elif self.llm_manager and not self.llm_manager.use_openai and not self.llm_manager.use_ollama:
+                errors.append(
+                    "LLM Manager initialized but no LLM provider available.\n"
+                    "  Either set OPENAI_API_KEY in .env OR install and run Ollama\n"
+                    "  To disable LLM: Set USE_OPENAI=false and USE_OLLAMA=false in .env"
+                )
+        
+        # Check specialized agents
+        if requested_agents:
+            if not SPECIALIZED_AGENTS_AVAILABLE:
+                errors.append(
+                    "Specialized agents requested but not available.\n"
+                    "  Check installation of Phase 2 components."
+                )
+            elif not self.enable_specialized_agents:
+                errors.append(
+                    "Specialized agents requested but initialization failed.\n"
+                    "  Check logs above for specific error."
+                )
+        
+        # Check RAG availability  
+        if requested_rag:
+            if not RAG_AVAILABLE:
+                errors.append(
+                    "Advanced RAG requested but dependencies not installed.\n"
+                    "  Install with: pip install chromadb sentence-transformers"
+                )
+            elif not self.enable_advanced_rag:
+                errors.append(
+                    "Advanced RAG requested but initialization failed.\n"
+                    "  Check logs above for specific error."
+                )
+            elif self.rag_system and not self.rag_system.initialized:
+                errors.append(
+                    "RAG system enabled but failed to initialize properly.\n"
+                    "  Check ChromaDB installation and permissions."
+                )
+        
+        # If any errors, fail fast with helpful message
+        if errors:
+            error_msg = "\n" + "="*70 + "\n"
+            error_msg += "❌ CONFIGURATION ERROR: Phase 2 Features Misconfigured\n"
+            error_msg += "="*70 + "\n\n"
+            error_msg += "The following issues were found:\n\n"
+            for i, error in enumerate(errors, 1):
+                error_msg += f"{i}. {error}\n\n"
+            error_msg += "To fix these issues:\n"
+            error_msg += "  - Install missing dependencies: pip install -r requirements.txt\n"
+            error_msg += "  - Configure API keys in .env file\n"
+            error_msg += "  - OR disable Phase 2 features you don't need in .env\n"
+            error_msg += "\nFor help, see: docs/PHASE2_COMPLETE.md\n"
+            error_msg += "="*70 + "\n"
+            
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
     
     def _create_tutoring_graph(self) -> StateGraph:
         """
@@ -98,21 +267,30 @@ class AdvancedTutoringSystem:
         logger.info("📊 Tutoring graph created with 6 educational agents")
         return graph
     
-    def route_educational_request(self, state: TutoringState) -> Literal["subject_expert", "content_creator", "practice", "assessment"]:
+    def route_educational_request(self, state: TutoringState) -> Literal["subject_expert", "math_tutor", "science_tutor", "programming_tutor", "content_creator"]:
         """
-        Route educational requests to appropriate agents
+        Route educational requests to appropriate specialized agents (Phase 2)
         
-        This is a placeholder for Phase 2 advanced routing.
-        Currently, all requests start with subject_expert.
-        
-        Future routing logic:
-        - Math problems → MathTutorAgent
-        - Code questions → ProgrammingTutorAgent
-        - Quick questions → Fast track
-        - Complex topics → Full pipeline
+        Routing logic:
+        - Math topics → MathTutorAgent
+        - Science topics → ScienceTutorAgent  
+        - Programming topics → ProgrammingTutorAgent
+        - General topics → Standard pipeline
         """
-        # Phase 1: Simple routing - everyone starts at subject expert
-        return "subject_expert"
+        if not self.enable_specialized_agents:
+            return "subject_expert"
+        
+        subject = state.get('detected_subject', 'general').lower()
+        
+        # Route to specialized agents based on subject
+        if 'math' in subject or 'calculus' in subject or 'algebra' in subject or 'geometry' in subject:
+            return "math_tutor"
+        elif 'science' in subject or 'physics' in subject or 'chemistry' in subject or 'biology' in subject:
+            return "science_tutor"
+        elif 'programming' in subject or 'code' in subject or 'python' in subject or 'javascript' in subject:
+            return "programming_tutor"
+        else:
+            return "subject_expert"
     
     def teach_topic(
         self,
@@ -273,8 +451,8 @@ Future: Math/Science/Programming specialists (Phase 2)
         """
         return {
             "system": "Advanced Multi-Agent Tutoring System",
-            "version": "1.0.0-phase1",
-            "phase": "Phase 1: LangGraph Foundation",
+            "version": "2.1.0" if (self.enable_llm or self.enable_specialized_agents or self.enable_advanced_rag) else "2.0.0",
+            "phase": "Phase 2: LLM Integration & Educational AI" if (self.enable_llm or self.enable_specialized_agents or self.enable_advanced_rag) else "Phase 1: LangGraph Foundation",
             "status": "operational",
             "agents": {
                 "active": [
@@ -286,13 +464,11 @@ Future: Math/Science/Programming specialists (Phase 2)
                     "progress_tracker"
                 ],
                 "count": 6,
-                "planned": [
-                    "math_tutor_agent",
-                    "science_tutor_agent",
-                    "programming_tutor_agent",
-                    "learning_adapter_agent",
-                    "visual_content_agent"
-                ]
+                "specialized": {
+                    "math_tutor": self.enable_specialized_agents,
+                    "science_tutor": self.enable_specialized_agents,
+                    "programming_tutor": self.enable_specialized_agents
+                }
             },
             "features": {
                 "multi_agent_orchestration": True,
@@ -301,16 +477,61 @@ Future: Math/Science/Programming specialists (Phase 2)
                 "personalized_lessons": True,
                 "practice_generation": True,
                 "assessment_ready": True,
-                "llm_integration": False,  # Phase 2
-                "advanced_rag": False,  # Phase 2
+                "llm_integration": self.enable_llm,  
+                "llm_provider": self._get_llm_provider() if self.enable_llm else None,
+                "specialized_agents": self.enable_specialized_agents,  
+                "advanced_rag": self.enable_advanced_rag,  
                 "streaming": False,  # Phase 3
                 "database_persistence": False  # Phase 3
             },
+            "llm_details": self._get_llm_details() if self.enable_llm else None,
+            "rag_details": self._get_rag_details() if self.enable_advanced_rag else None,
             "capabilities": {
                 "subjects": "all",
                 "levels": ["beginner", "intermediate", "advanced"],
                 "learning_styles": ["visual", "auditory", "kinesthetic", "mixed"]
             }
+        }
+    
+    def _get_llm_provider(self) -> str:
+        """Get the active LLM provider"""
+        if not self.llm_manager:
+            return "none"
+        if self.llm_manager.use_openai:
+            return "openai"
+        if self.llm_manager.use_ollama:
+            return "ollama"
+        return "none"
+    
+    def _get_llm_details(self) -> Dict[str, Any]:
+        """Get detailed LLM information"""
+        if not self.llm_manager:
+            return None
+        
+        return {
+            "openai": {
+                "enabled": self.llm_manager.use_openai,
+                "model": self.llm_manager.openai_model if self.llm_manager.use_openai else None
+            },
+            "ollama": {
+                "enabled": self.llm_manager.use_ollama,
+                "model": self.llm_manager.ollama_model if self.llm_manager.use_ollama else None,
+                "host": self.llm_manager.ollama_host if self.llm_manager.use_ollama else None
+            },
+            "active_provider": self._get_llm_provider()
+        }
+    
+    def _get_rag_details(self) -> Dict[str, Any]:
+        """Get detailed RAG information"""
+        if not self.rag_system:
+            return None
+        
+        return {
+            "initialized": self.rag_system.initialized,
+            "vector_db": "chromadb" if self.rag_system.initialized else None,
+            "collection": self.rag_system.collection_name if self.rag_system.initialized else None,
+            "embedder": "sentence-transformers" if self.rag_system.embedder else None,
+            "reranker": "cross-encoder" if self.reranker and self.reranker.initialized else None
         }
 
 

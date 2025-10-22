@@ -17,17 +17,42 @@ class EducationalNodes:
     """
     Collection of educational agent nodes for LangGraph
     Each method is a node that can be used in the tutoring graph
+    LLM, Specialized Agents, and Advanced RAG
     """
     
-    def __init__(self, tutor: UniversalAITutor):
+    def __init__(
+        self, 
+        tutor: UniversalAITutor,
+        llm_manager=None,
+        specialized_agents=None,
+        rag_system=None
+    ):
         """
-        Initialize with a tutor instance for accessing existing functionality
+        Initialize with a tutor instance 
         
         Args:
             tutor: UniversalAITutor instance
+            llm_manager: EducationalLLMManager for AI content 
+            specialized_agents: Dict of specialized subject agents 
+            rag_system: EducationalRAG for advanced retrieval 
         """
         self.tutor = tutor
-        logger.info("Educational nodes initialized")
+        self.llm_manager = llm_manager
+        self.specialized_agents = specialized_agents or {}
+        self.rag_system = rag_system
+        
+        phase2_features = []
+        if llm_manager:
+            phase2_features.append("LLM")
+        if specialized_agents:
+            phase2_features.append("Specialized Agents")
+        if rag_system:
+            phase2_features.append("Advanced RAG")
+        
+        if phase2_features:
+            logger.info(f"Educational nodes initialized with Phase 2: {', '.join(phase2_features)}")
+        else:
+            logger.info("Educational nodes initialized (Phase 1 only)")
     
     def subject_expert_node(self, state: TutoringState) -> TutoringState:
         """
@@ -81,6 +106,7 @@ class EducationalNodes:
         Content Creator Agent - Generates personalized educational content
         
         Creates comprehensive lesson plans and explanations tailored to the student
+        Phase 2 of the project: Uses LLM for high-quality content when available
         """
         logger.info(f"Content Creator generating lesson for: {state['learning_request']}")
         
@@ -90,7 +116,7 @@ class EducationalNodes:
             level = state['detected_level']
             student_profile = StudentProfile.from_dict(state['student_profile'])
             
-            # Generate lesson plan
+            # Generate lesson plan (Phase 1 - still useful for structure)
             lesson_plan = self.tutor.create_lesson_plan(
                 topic=topic,
                 subject=subject,
@@ -99,11 +125,50 @@ class EducationalNodes:
             )
             
             # Generate detailed explanation
-            explanation = self.tutor.generate_explanation(
-                topic=topic,
-                level=level,
-                learning_style=student_profile.learning_style
-            )
+            # Phase 2: Use LLM if enabled, otherwise use rule-based
+            if self.llm_manager:
+                import asyncio
+                import nest_asyncio
+                
+                # Enable nested event loops
+                nest_asyncio.apply()
+                
+                try:
+                    # Run async LLM call properly
+                    loop = asyncio.get_event_loop()
+                    explanation_text = loop.run_until_complete(
+                        self.llm_manager.create_lesson_explanation(
+                            topic=topic,
+                            level=level,
+                            learning_style=student_profile.learning_style,
+                            student_context={
+                                'prior_knowledge': student_profile.learning_goals,
+                                'level': student_profile.level
+                            }
+                        )
+                    )
+                    
+                    explanation = {
+                        'main_explanation': explanation_text,
+                        'generated_by': 'llm',
+                        'personalized': True
+                    }
+                    logger.info("Generated LLM-powered explanation")
+                    
+                except Exception as e:
+                    logger.error(f"LLM explanation failed: {e}")
+                    raise RuntimeError(
+                        f"Phase 2 LLM Manager is enabled but failed to generate content: {e}\n"
+                        f"To fix: Check API keys, verify Ollama is running, or disable LLM features."
+                    )
+            else:
+                # Phase 1 mode - no LLM available
+                explanation = self.tutor.generate_explanation(
+                    topic=topic,
+                    level=level,
+                    learning_style=student_profile.learning_style
+                )
+                explanation['generated_by'] = 'rule-based'
             
             logger.info(f"Created lesson plan with {len(lesson_plan['objectives'])} objectives")
             
@@ -131,6 +196,7 @@ class EducationalNodes:
         Content Retriever Agent - Finds relevant educational resources
         
         Searches for and retrieves educational content from various sources
+        Phase 2: Uses Advanced RAG when available
         """
         logger.info(f"Content Retriever searching for: {state['learning_request']}")
         
@@ -139,13 +205,53 @@ class EducationalNodes:
             subject = state['detected_subject']
             level = state['detected_level']
             
-            # Retrieve educational content
-            educational_content = self.tutor.find_educational_content(
-                topic=topic,
-                subject=subject,
-                level=level,
-                max_results=5
-            )
+            # Phase 2: Use Advanced RAG if available
+            if self.rag_system and self.rag_system.initialized:
+                import asyncio
+                import nest_asyncio
+                
+                # Enable nested event loops
+                nest_asyncio.apply()
+                
+                try:
+                    # Run async RAG search properly
+                    loop = asyncio.get_event_loop()
+                    educational_content = loop.run_until_complete(
+                        self.rag_system.hybrid_search(
+                            query=topic,
+                            subject=subject,
+                            student_level=level,
+                            top_k=5
+                        )
+                    )
+                    
+                    # Format RAG results to match expected structure
+                    formatted_content = []
+                    for result in educational_content:
+                        formatted_content.append({
+                            'title': result.get('metadata', {}).get('title', topic),
+                            'content': result.get('content', ''),
+                            'source': 'rag',
+                            'relevance_score': result.get('combined_score', 0.5)
+                        })
+                    
+                    educational_content = formatted_content
+                    logger.info(f"Retrieved {len(educational_content)} resources via Advanced RAG")
+                    
+                except Exception as e:
+                    logger.error(f"RAG retrieval failed: {e}")
+                    raise RuntimeError(
+                        f"Phase 2 RAG system is enabled but failed to retrieve content: {e}\n"
+                        f"To fix: Check ChromaDB installation, verify data is indexed, or disable RAG features."
+                    )
+            else:
+                # Phase 1 mode - basic web search
+                educational_content = self.tutor.find_educational_content(
+                    topic=topic,
+                    subject=subject,
+                    level=level,
+                    max_results=5
+                )
             
             logger.info(f"Retrieved {len(educational_content)} educational resources")
             
@@ -173,6 +279,7 @@ class EducationalNodes:
         Practice Generator Agent - Creates practice problems and exercises
         
         Generates appropriate practice problems based on the lesson content
+        Phase 2: Uses LLM for more varied and appropriate problems
         """
         logger.info(f"📝 Practice Generator creating exercises for: {state['learning_request']}")
         
@@ -181,13 +288,42 @@ class EducationalNodes:
             subject = state['detected_subject']
             level = state['detected_level']
             
-            # Generate practice problems
-            practice_problems = self.tutor.create_practice_problems(
-                topic=topic,
-                subject=subject,
-                level=level,
-                count=5
-            )
+            # Phase 2: Use LLM if available for better practice problems
+            if self.llm_manager:
+                import asyncio
+                import nest_asyncio
+                
+                # Enable nested event loops
+                nest_asyncio.apply()
+                
+                try:
+                    # Run async LLM call properly
+                    loop = asyncio.get_event_loop()
+                    practice_problems = loop.run_until_complete(
+                        self.llm_manager.generate_practice_problems(
+                            topic=topic,
+                            level=level,
+                            count=5,
+                            difficulty_progression=True
+                        )
+                    )
+                    
+                    logger.info(f"Created {len(practice_problems)} LLM-generated practice problems")
+                    
+                except Exception as e:
+                    logger.error(f"LLM practice generation failed: {e}")
+                    raise RuntimeError(
+                        f"Phase 2 LLM Manager is enabled but failed to generate practice problems: {e}\n"
+                        f"To fix: Check API keys, verify Ollama is running, or disable LLM features."
+                    )
+            else:
+                # Phase 1 mode - rule-based problems
+                practice_problems = self.tutor.create_practice_problems(
+                    topic=topic,
+                    subject=subject,
+                    level=level,
+                    count=5
+                )
             
             logger.info(f"Created {len(practice_problems)} practice problems")
             
@@ -373,14 +509,27 @@ class EducationalNodes:
         return recommendations
 
 
-def create_educational_nodes(tutor: UniversalAITutor) -> EducationalNodes:
+def create_educational_nodes(
+    tutor: UniversalAITutor,
+    llm_manager=None,
+    specialized_agents=None,
+    rag_system=None
+) -> EducationalNodes:
     """
     Factory function to create educational nodes
     
     Args:
         tutor: UniversalAITutor instance
+        llm_manager: EducationalLLMManager for Phase 2 (optional)
+        specialized_agents: Dict of specialized agents for Phase 2 (optional)
+        rag_system: EducationalRAG for Phase 2 (optional)
         
     Returns:
-        EducationalNodes instance
+        EducationalNodes instance with Phase 2 enhancements if provided
     """
-    return EducationalNodes(tutor)
+    return EducationalNodes(
+        tutor=tutor,
+        llm_manager=llm_manager,
+        specialized_agents=specialized_agents,
+        rag_system=rag_system
+    )

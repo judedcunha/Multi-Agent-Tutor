@@ -109,7 +109,13 @@ class TestAdvancedSystem:
     
     def test_system_status(self):
         """Test system status reporting"""
-        system = AdvancedTutoringSystem(use_local_model=False)
+        # Initialize with Phase 2 features explicitly disabled to test Phase 1 status
+        system = AdvancedTutoringSystem(
+            use_local_model=False,
+            enable_llm=False,
+            enable_specialized_agents=False,
+            enable_advanced_rag=False
+        )
         status = system.get_system_status()
         
         assert status["system"] == "Advanced Multi-Agent Tutoring System"
