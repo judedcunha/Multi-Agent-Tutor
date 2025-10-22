@@ -193,11 +193,24 @@ class EducationalRAG:
                 distances = results['distances'][0] if results['distances'] else [0] * len(documents)
                 
                 for doc, metadata, distance in zip(documents, metadatas, distances):
+                    # Convert L2 distance to similarity score using bounded monotonic mapping
+                    # This handles L2 distances (which can be > 1.0) appropriately
+                    score = 1.0 / (1.0 + distance)
+                    
+                    # Determine relevance based on L2-appropriate thresholds
+                    # Higher scores (closer to 1.0) indicate better matches
+                    if score > 0.66:
+                        relevance = 'high'
+                    elif score > 0.33:
+                        relevance = 'medium'
+                    else:
+                        relevance = 'low'
+                    
                     retrieved_content.append({
                         'content': doc,
                         'metadata': metadata,
-                        'score': 1.0 - distance,  # Convert distance to similarity score
-                        'relevance': 'high' if distance < 0.5 else 'medium' if distance < 1.0 else 'low'
+                        'score': score,
+                        'relevance': relevance
                     })
             
             logger.info(f"Retrieved {len(retrieved_content)} relevant documents")

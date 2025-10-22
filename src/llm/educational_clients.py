@@ -346,6 +346,13 @@ For help, see the documentation or contact support."""
         """
         logger.info(f"Generating {count} practice problems for: {topic}")
         
+        problems = []
+        
+        # Guard against zero or negative retries
+        if max_retries <= 0:
+            logger.warning(f"Invalid max_retries value: {max_retries}, using default of 1")
+            max_retries = 1
+        
         for attempt in range(max_retries):
             logger.debug(f"Attempt {attempt + 1}/{max_retries}")
             
