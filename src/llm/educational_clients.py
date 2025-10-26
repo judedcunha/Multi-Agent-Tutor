@@ -186,13 +186,13 @@ class EducationalLLMManager:
         if use_ollama:
             try:
                 import ollama
-                self.ollama_client = ollama
-                logger.info(f"Ollama client initialized with model: {ollama_model}")
+                self.ollama_client = ollama.Client(host=self.ollama_host)
+                logger.info(f"Ollama client initialized with host: {ollama_host}, model: {ollama_model}")
             except ImportError:
                 logger.warning("Ollama library not installed - install with: pip install ollama")
                 self.use_ollama = False
             except Exception as e:
-                logger.error(f"Failed to initialize Ollama: {e}")
+                logger.exception(f"Failed to initialize Ollama: {e}")
                 self.use_ollama = False
         
         logger.info(f"LLM Manager initialized - OpenAI: {self.use_openai}, Ollama: {self.use_ollama}")
@@ -252,7 +252,7 @@ class EducationalLLMManager:
                 start_time = time.time()
                 logger.debug(f"Sending request to Ollama - Prompt length: {len(prompt)} chars")
                 
-                # Run blocking Ollama call in thread pool
+                # Run blocking Ollama call in thread pool with timeout
                 def _call_ollama():
                     response = self.ollama_client.generate(
                         model=self.ollama_model,
@@ -264,14 +264,18 @@ class EducationalLLMManager:
                     )
                     return response['response']
                 
-                content = await asyncio.to_thread(_call_ollama)
+                # Enforce request timeout (60 seconds)
+                content = await asyncio.wait_for(
+                    asyncio.to_thread(_call_ollama),
+                    timeout=60.0
+                )
                 elapsed = time.time() - start_time
                 
                 logger.info(f"Ollama success - Time: {elapsed:.2f}s, Length: {len(content)} chars")
                 logger.debug(f"Response preview: {content[:200]}...")
                 return content
             except Exception as e:
-                logger.error(f"Ollama generation failed: {e}")
+                logger.exception(f"Ollama generation failed: {e}")
                 # Fall through to error
         
         # If both failed, return error message

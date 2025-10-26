@@ -3,10 +3,15 @@ Advanced RAG (Retrieval-Augmented Generation) for Educational Content
 """
 
 import os
+import re
 import logging
-from typing import Dict, Any, List, Optional
+import asyncio
+import math
+import string
+from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 from pathlib import Path
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +19,7 @@ logger = logging.getLogger(__name__)
 class EducationalRAG:
     """
     Advanced RAG system for educational content retrieval
-    Uses ChromaDB for vector storage and semantic search
+    Uses ChromaDB for vector storage and BM25 for keyword search
     """
     
     def __init__(
@@ -35,6 +40,22 @@ class EducationalRAG:
         self.collection = None
         self.embedder = None
         self.initialized = False
+        
+        # BM25 components
+        self.bm25_index = None
+        self.bm25_corpus = []  # Store tokenized documents
+        self.bm25_documents = []  # Store original documents
+        self.bm25_metadatas = []  # Store document metadata
+        self.bm25_ids = []  # Store document IDs
+        
+        # Preprocessing settings
+        self.stopwords = set([
+            'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from',
+            'has', 'he', 'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the',
+            'to', 'was', 'will', 'with', 'the', 'this', 'these', 'those',
+            'i', 'you', 'we', 'they', 'what', 'which', 'who', 'when', 'where',
+            'why', 'how', 'can', 'could', 'would', 'should', 'may', 'might'
+        ])
         
         # Try to initialize ChromaDB
         try:
@@ -72,14 +93,27 @@ class EducationalRAG:
                 
                 self.embedder = SentenceTransformer('all-MiniLM-L6-v2', device=device)
                 logger.info(f"Initialized sentence transformer embedder on {device.upper()}")
-                self.initialized = True
+                
+                # Initialize BM25 if rank-bm25 is available
+                try:
+                    from rank_bm25 import BM25Okapi
+                    self.BM25Okapi = BM25Okapi
+                    self.initialized = True
+                    print("BM25 library loaded successfully - hybrid search available")
+                    logger.info("BM25 initialized successfully - hybrid search available")
+                except ImportError as e:
+                    print(f"BM25 library not loaded: {e}")
+                    logger.warning("rank-bm25 not installed - hybrid search limited")
+                    logger.info("Install with: pip install rank-bm25")
+                    self.initialized = True  # Still allow semantic search
+                    
             except ImportError:
                 logger.warning("sentence-transformers not installed - semantic search limited")
                 self.initialized = False
                 
         except ImportError:
             logger.warning("ChromaDB not installed - advanced RAG features unavailable")
-            logger.info("Install with: pip install chromadb sentence-transformers")
+            logger.info("Install with: pip install chromadb sentence-transformers rank-bm25")
             self.initialized = False
         except Exception as e:
             logger.error(f"Failed to initialize RAG system: {e}")
@@ -90,12 +124,45 @@ class EducationalRAG:
         else:
             logger.warning("Educational RAG system running in fallback mode")
     
+    def _tokenize(self, text: str) -> List[str]:
+        """
+        Tokenize and preprocess text for BM25
+        
+        Args:
+            text: Raw text to tokenize
+            
+        Returns:
+            List of processed tokens
+        """
+        # Convert to lowercase
+        text = text.lower()
+        
+        # Remove punctuation
+        text = text.translate(str.maketrans('', '', string.punctuation))
+        
+        # Split into tokens
+        tokens = text.split()
+        
+        # Remove stopwords and short tokens
+        tokens = [
+            token for token in tokens 
+            if token not in self.stopwords and len(token) > 2
+        ]
+        
+        return tokens
+    
+    def _build_bm25_index(self):
+        """Build or rebuild the BM25 index from current corpus"""
+        if hasattr(self, 'BM25Okapi') and self.bm25_corpus:
+            self.bm25_index = self.BM25Okapi(self.bm25_corpus)
+            logger.info(f"Built BM25 index with {len(self.bm25_corpus)} documents")
+    
     async def index_educational_content(
         self,
         content_list: List[Dict[str, Any]]
     ) -> bool:
         """
-        Index educational content for retrieval
+        Index educational content for both semantic and keyword retrieval
         
         Args:
             content_list: List of content dictionaries with 'text', 'metadata'
@@ -111,17 +178,29 @@ class EducationalRAG:
             import asyncio
             logger.info(f"Indexing {len(content_list)} educational resources")
             
-            # Prepare documents
+            # Prepare documents for ChromaDB
             documents = []
             metadatas = []
             ids = []
             
             for idx, content in enumerate(content_list):
-                documents.append(content.get('text', ''))
-                metadatas.append(content.get('metadata', {}))
-                ids.append(content.get('id', f"doc_{idx}"))
+                doc_text = content.get('text', '')
+                doc_metadata = content.get('metadata', {})
+                doc_id = content.get('id', f"doc_{idx}")
+                
+                documents.append(doc_text)
+                metadatas.append(doc_metadata)
+                ids.append(doc_id)
+                
+                # Also prepare for BM25 indexing
+                if hasattr(self, 'BM25Okapi'):
+                    tokenized_doc = self._tokenize(doc_text)
+                    self.bm25_corpus.append(tokenized_doc)
+                    self.bm25_documents.append(doc_text)
+                    self.bm25_metadatas.append(doc_metadata)
+                    self.bm25_ids.append(doc_id)
             
-            # Add to collection - wrap blocking call in thread pool
+            # Add to ChromaDB collection - wrap blocking call in thread pool
             await asyncio.to_thread(
                 self.collection.add,
                 documents=documents,
@@ -129,7 +208,13 @@ class EducationalRAG:
                 ids=ids
             )
             
-            logger.info(f"Successfully indexed {len(content_list)} documents")
+            # Build BM25 index if available
+            if hasattr(self, 'BM25Okapi'):
+                self._build_bm25_index()
+                logger.info(f"Indexed {len(content_list)} documents in both ChromaDB and BM25")
+            else:
+                logger.info(f"Indexed {len(content_list)} documents in ChromaDB only")
+            
             return True
             
         except Exception as e:
@@ -144,7 +229,7 @@ class EducationalRAG:
         top_k: int = 5
     ) -> List[Dict[str, Any]]:
         """
-        Retrieve relevant educational content
+        Retrieve relevant educational content using semantic search
         
         Args:
             query: Search query
@@ -193,12 +278,10 @@ class EducationalRAG:
                 distances = results['distances'][0] if results['distances'] else [0] * len(documents)
                 
                 for doc, metadata, distance in zip(documents, metadatas, distances):
-                    # Convert L2 distance to similarity score using bounded monotonic mapping
-                    # This handles L2 distances (which can be > 1.0) appropriately
+                    # Convert L2 distance to similarity score
                     score = 1.0 / (1.0 + distance)
                     
-                    # Determine relevance based on L2-appropriate thresholds
-                    # Higher scores (closer to 1.0) indicate better matches
+                    # Determine relevance based on score
                     if score > 0.66:
                         relevance = 'high'
                     elif score > 0.33:
@@ -210,10 +293,11 @@ class EducationalRAG:
                         'content': doc,
                         'metadata': metadata,
                         'score': score,
-                        'relevance': relevance
+                        'relevance': relevance,
+                        'source': 'semantic'
                     })
             
-            logger.info(f"Retrieved {len(retrieved_content)} relevant documents")
+            logger.info(f"Retrieved {len(retrieved_content)} relevant documents via semantic search")
             return retrieved_content
             
         except Exception as e:
@@ -243,7 +327,7 @@ class EducationalRAG:
         top_k: int = 10
     ) -> List[Dict[str, Any]]:
         """
-        Perform keyword-based search (BM25)
+        Perform keyword-based search using BM25
         
         Args:
             query: Search query
@@ -252,10 +336,46 @@ class EducationalRAG:
         Returns:
             List of keyword-matched content
         """
-        # This would use BM25 in production
-        # For now, fallback to semantic search
-        logger.info("Using semantic search as keyword search fallback")
-        return await self.semantic_search(query, top_k)
+        if not hasattr(self, 'BM25Okapi') or not self.bm25_index:
+            logger.info("BM25 not available - using semantic search as fallback")
+            return await self.semantic_search(query, top_k)
+        
+        try:
+            logger.info(f"Performing BM25 keyword search for: {query}")
+            
+            # Tokenize query using same preprocessing as documents
+            tokenized_query = self._tokenize(query)
+            
+            # Get BM25 scores
+            scores = self.bm25_index.get_scores(tokenized_query)
+            
+            # Get top-k indices
+            top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+            
+            # Build results
+            keyword_results = []
+            for idx in top_indices:
+                if scores[idx] > 0:  # Only include documents with positive scores
+                    # Normalize BM25 score (typically ranges from 0 to ~10-20)
+                    # Using sigmoid-like normalization for better 0-1 mapping
+                    normalized_score = 1 - math.exp(-scores[idx] / 10)
+                    
+                    keyword_results.append({
+                        'content': self.bm25_documents[idx],
+                        'metadata': self.bm25_metadatas[idx] if idx < len(self.bm25_metadatas) else {},
+                        'score': normalized_score,
+                        'bm25_raw_score': float(scores[idx]),
+                        'relevance': 'high' if normalized_score > 0.5 else 'medium' if normalized_score > 0.2 else 'low',
+                        'source': 'bm25'
+                    })
+            
+            logger.info(f"Retrieved {len(keyword_results)} documents via BM25 search")
+            return keyword_results
+            
+        except Exception as e:
+            logger.error(f"BM25 search failed: {e}")
+            logger.info("Falling back to semantic search")
+            return await self.semantic_search(query, top_k)
     
     async def hybrid_search(
         self,
@@ -263,10 +383,12 @@ class EducationalRAG:
         subject: Optional[str] = None,
         student_level: Optional[str] = None,
         top_k: int = 10,
-        semantic_weight: float = 0.7
+        semantic_weight: float = 0.5,
+        bm25_weight: float = 0.5,
+        fusion_method: str = "weighted"  # "weighted" or "rrf"
     ) -> List[Dict[str, Any]]:
         """
-        Combine semantic and keyword search
+        True hybrid search combining semantic and BM25 keyword search
         
         Args:
             query: Search query
@@ -274,50 +396,98 @@ class EducationalRAG:
             student_level: Filter by level
             top_k: Number of results
             semantic_weight: Weight for semantic results (0-1)
+            bm25_weight: Weight for BM25 results (0-1)
+            fusion_method: Method to combine results ("weighted" or "rrf")
             
         Returns:
             List of combined search results
         """
-        """
-        TODO: Implement true hybrid search once keyword/BM25 search is available
-        Currently falls back to semantic search only
-        """
-        logger.warning("Hybrid search not yet implemented - using semantic search")        
         try:
-            # Get semantic results
-            semantic_results = await self.semantic_search(query, top_k=top_k * 2)
+            logger.info(f"Performing hybrid search with method: {fusion_method}")
             
-            # Get keyword results (currently fallback to semantic)
-            keyword_results = await self.keyword_search(query, top_k=top_k * 2)
+            # Normalize weights
+            total_weight = semantic_weight + bm25_weight
+            if total_weight > 0:
+                semantic_weight = semantic_weight / total_weight
+                bm25_weight = bm25_weight / total_weight
+            else:
+                semantic_weight = 0.5
+                bm25_weight = 0.5
             
-            # Combine results with weighted scoring
-            combined = self._combine_search_results(
-                semantic_results,
-                keyword_results,
-                semantic_weight=semantic_weight,
-                keyword_weight=1.0 - semantic_weight
+            # Run both searches in parallel
+            semantic_task = asyncio.create_task(
+                self.retrieve_educational_content(
+                    query, subject, student_level, top_k * 2
+                )
             )
+            keyword_task = asyncio.create_task(
+                self.keyword_search(query, top_k * 2)
+            )
+            
+            # Wait for both to complete
+            semantic_results, keyword_results = await asyncio.gather(
+                semantic_task, keyword_task
+            )
+            
+            # Combine results based on method
+            if fusion_method == "rrf":
+                combined = self._reciprocal_rank_fusion(
+                    semantic_results, 
+                    keyword_results,
+                    k=60  # RRF parameter
+                )
+            else:  # weighted
+                combined = self._weighted_fusion(
+                    semantic_results,
+                    keyword_results,
+                    semantic_weight,
+                    bm25_weight
+                )
             
             # Filter by subject and level if specified
             if subject or student_level:
                 combined = self._filter_by_criteria(combined, subject, student_level)
             
             # Return top_k results
-            return combined[:top_k]
+            final_results = combined[:top_k]
+            
+            # Log statistics
+            logger.info(
+                f"Hybrid search complete - "
+                f"Semantic: {len(semantic_results)}, "
+                f"BM25: {len(keyword_results)}, "
+                f"Combined: {len(combined)}, "
+                f"Final: {len(final_results)}"
+            )
+            
+            return final_results
             
         except Exception as e:
             logger.error(f"Hybrid search failed: {e}")
-            return []
+            # Fallback to semantic search
+            return await self.retrieve_educational_content(
+                query, subject, student_level, top_k
+            )
     
-    def _combine_search_results(
+    def _weighted_fusion(
         self,
         semantic_results: List[Dict],
         keyword_results: List[Dict],
         semantic_weight: float,
         keyword_weight: float
     ) -> List[Dict]:
-        """Combine and re-score results from different search methods"""
-        # Simple combination - in production would be more sophisticated
+        """
+        Combine results using weighted score fusion
+        
+        Args:
+            semantic_results: Results from semantic search
+            keyword_results: Results from BM25 search
+            semantic_weight: Weight for semantic scores
+            keyword_weight: Weight for BM25 scores
+            
+        Returns:
+            Combined and sorted results
+        """
         combined_dict = {}
         
         # Add semantic results
@@ -326,19 +496,28 @@ class EducationalRAG:
             score = result.get('score', 0) * semantic_weight
             combined_dict[content] = {
                 **result,
-                'combined_score': score
+                'combined_score': score,
+                'semantic_score': result.get('score', 0),
+                'sources': ['semantic']
             }
         
         # Add/update with keyword results
         for result in keyword_results:
             content = result['content']
             score = result.get('score', 0) * keyword_weight
+            
             if content in combined_dict:
+                # Document found in both - combine scores
                 combined_dict[content]['combined_score'] += score
+                combined_dict[content]['bm25_score'] = result.get('score', 0)
+                combined_dict[content]['sources'].append('bm25')
             else:
+                # Document only in BM25
                 combined_dict[content] = {
                     **result,
-                    'combined_score': score
+                    'combined_score': score,
+                    'bm25_score': result.get('score', 0),
+                    'sources': ['bm25']
                 }
         
         # Sort by combined score
@@ -347,6 +526,90 @@ class EducationalRAG:
             key=lambda x: x['combined_score'],
             reverse=True
         )
+        
+        # Update relevance based on combined score
+        for doc in combined:
+            score = doc['combined_score']
+            if score > 0.6:
+                doc['relevance'] = 'high'
+            elif score > 0.3:
+                doc['relevance'] = 'medium'
+            else:
+                doc['relevance'] = 'low'
+        
+        return combined
+    
+    def _reciprocal_rank_fusion(
+        self,
+        semantic_results: List[Dict],
+        keyword_results: List[Dict],
+        k: int = 60
+    ) -> List[Dict]:
+        """
+        Combine results using Reciprocal Rank Fusion (RRF)
+        
+        RRF score = sum(1 / (k + rank_in_list))
+        
+        Args:
+            semantic_results: Results from semantic search
+            keyword_results: Results from BM25 search
+            k: RRF parameter (typically 60)
+            
+        Returns:
+            Combined and sorted results
+        """
+        rrf_scores = defaultdict(float)
+        doc_data = {}
+        
+        # Process semantic results
+        for rank, result in enumerate(semantic_results, 1):
+            content = result['content']
+            rrf_scores[content] += 1 / (k + rank)
+            if content not in doc_data:
+                doc_data[content] = {
+                    **result,
+                    'semantic_rank': rank,
+                    'sources': ['semantic']
+                }
+            else:
+                doc_data[content]['semantic_rank'] = rank
+                doc_data[content]['sources'].append('semantic')
+        
+        # Process keyword results
+        for rank, result in enumerate(keyword_results, 1):
+            content = result['content']
+            rrf_scores[content] += 1 / (k + rank)
+            if content not in doc_data:
+                doc_data[content] = {
+                    **result,
+                    'bm25_rank': rank,
+                    'sources': ['bm25']
+                }
+            else:
+                doc_data[content]['bm25_rank'] = rank
+                if 'bm25' not in doc_data[content]['sources']:
+                    doc_data[content]['sources'].append('bm25')
+        
+        # Build final results
+        combined = []
+        for content, rrf_score in rrf_scores.items():
+            doc = doc_data[content].copy()
+            doc['rrf_score'] = rrf_score
+            # Normalize RRF score to 0-1 range for consistency
+            doc['combined_score'] = min(rrf_score * k / 2, 1.0)  
+            
+            # Update relevance
+            if doc['combined_score'] > 0.6:
+                doc['relevance'] = 'high'
+            elif doc['combined_score'] > 0.3:
+                doc['relevance'] = 'medium'
+            else:
+                doc['relevance'] = 'low'
+            
+            combined.append(doc)
+        
+        # Sort by RRF score
+        combined.sort(key=lambda x: x['rrf_score'], reverse=True)
         
         return combined
     
@@ -369,6 +632,35 @@ class EducationalRAG:
             filtered.append(result)
         
         return filtered
+    
+    async def get_search_statistics(self) -> Dict[str, Any]:
+        """
+        Get statistics about the current index
+        
+        Returns:
+            Dictionary with index statistics
+        """
+        stats = {
+            'chromadb_initialized': self.collection is not None,
+            'bm25_initialized': self.bm25_index is not None,
+            'bm25_available': hasattr(self, 'BM25Okapi'),  # Whether BM25 library is available
+            'hybrid_search_available': hasattr(self, 'BM25Okapi'),  # Based on library availability, not index
+            'total_documents': len(self.bm25_documents) if self.bm25_documents else 0,
+            'embedder_available': self.embedder is not None,
+            'collection_name': self.collection_name,
+            'persist_directory': self.persist_directory
+        }
+        
+        if self.collection:
+            try:
+                # Get ChromaDB collection stats
+                import asyncio
+                count = await asyncio.to_thread(self.collection.count)
+                stats['chromadb_document_count'] = count
+            except:
+                stats['chromadb_document_count'] = 'unknown'
+        
+        return stats
 
 
 class EducationalReranker:
@@ -554,20 +846,30 @@ if __name__ == "__main__":
     
     async def test_rag():
         """Test the RAG system"""
-        print("Testing Educational RAG System...")
+        print("Testing Educational RAG System with Hybrid Search...")
+        print("=" * 60)
         
         # Create RAG system
         rag, reranker = create_rag_system()
         
         if not rag.initialized:
             print("RAG system not initialized - install dependencies")
+            print("Run: pip install chromadb sentence-transformers rank-bm25")
             return
+        
+        # Check search capabilities
+        stats = await rag.get_search_statistics()
+        print("\nSystem Capabilities:")
+        print(f"  - ChromaDB: {'Working' if stats['chromadb_initialized'] else 'Not working'}")
+        print(f"  - BM25: {'Working' if stats['bm25_initialized'] else 'Not working'}")
+        print(f"  - Hybrid Search: {'Working' if stats['hybrid_search_available'] else 'Not working'}")
+        print(f"  - Embedder: {'Working' if stats['embedder_available'] else 'Not working'}")
         
         # Sample educational content
         sample_content = [
             {
                 'id': 'py_lists_1',
-                'text': 'Python lists are ordered, mutable collections that can store items of different types.',
+                'text': 'Python lists are ordered, mutable collections that can store items of different types. You can add items using append() and remove them using pop().',
                 'metadata': {
                     'subject': 'programming',
                     'level': 'beginner',
@@ -576,32 +878,128 @@ if __name__ == "__main__":
             },
             {
                 'id': 'py_loops_1',
-                'text': 'For loops in Python allow you to iterate over sequences like lists, tuples, and strings.',
+                'text': 'For loops in Python allow you to iterate over sequences like lists, tuples, and strings. The range() function is commonly used with for loops.',
                 'metadata': {
                     'subject': 'programming',
                     'level': 'beginner',
                     'topic': 'python loops'
                 }
+            },
+            {
+                'id': 'py_functions_1',
+                'text': 'Functions in Python are defined using the def keyword. They help organize code and make it reusable. Functions can accept parameters and return values.',
+                'metadata': {
+                    'subject': 'programming',
+                    'level': 'intermediate',
+                    'topic': 'python functions'
+                }
+            },
+            {
+                'id': 'math_calc_1',
+                'text': 'Derivatives measure the rate of change of a function. The derivative of x² is 2x. This concept is fundamental in calculus.',
+                'metadata': {
+                    'subject': 'mathematics',
+                    'level': 'advanced',
+                    'topic': 'calculus'
+                }
+            },
+            {
+                'id': 'math_algebra_1',
+                'text': 'Linear equations have the form ax + b = c. To solve, isolate x by performing inverse operations. Always do the same operation to both sides.',
+                'metadata': {
+                    'subject': 'mathematics',
+                    'level': 'beginner',
+                    'topic': 'algebra'
+                }
             }
         ]
         
         # Index content
+        print("\nIndexing sample content...")
         success = await rag.index_educational_content(sample_content)
-        print(f"Indexed content: {success}")
+        print(f"  Indexed {len(sample_content)} documents: {'Working' if success else 'Not working'}")
         
-        # Retrieve content
-        results = await rag.retrieve_educational_content(
-            query="How do Python lists work?",
+        # Test different search methods
+        test_query = "How do Python functions work with parameters?"
+        print(f"\nTesting search methods for: '{test_query}'")
+        print("-" * 60)
+        
+        # 1. Semantic Search
+        print("\n1 Semantic Search Results:")
+        semantic_results = await rag.semantic_search(test_query, top_k=3)
+        for i, result in enumerate(semantic_results, 1):
+            print(f"  {i}. Score: {result['score']:.3f} | {result['content'][:80]}...")
+        
+        # 2. BM25 Keyword Search
+        print("\n2 BM25 Keyword Search Results:")
+        keyword_results = await rag.keyword_search(test_query, top_k=3)
+        for i, result in enumerate(keyword_results, 1):
+            score_info = f"Score: {result['score']:.3f}"
+            if 'bm25_raw_score' in result:
+                score_info += f" (Raw: {result['bm25_raw_score']:.2f})"
+            print(f"  {i}. {score_info} | {result['content'][:80]}...")
+        
+        # 3. Hybrid Search (Weighted)
+        print("\n3 Hybrid Search Results (Weighted Fusion):")
+        hybrid_results_weighted = await rag.hybrid_search(
+            test_query,
+            top_k=3,
+            semantic_weight=0.6,
+            bm25_weight=0.4,
+            fusion_method="weighted"
+        )
+        for i, result in enumerate(hybrid_results_weighted, 1):
+            sources = ', '.join(result.get('sources', ['unknown']))
+            print(f"  {i}. Score: {result['combined_score']:.3f} | Sources: [{sources}]")
+            print(f"     {result['content'][:80]}...")
+        
+        # 4. Hybrid Search (RRF)
+        print("\n4️⃣ Hybrid Search Results (RRF Fusion):")
+        hybrid_results_rrf = await rag.hybrid_search(
+            test_query,
+            top_k=3,
+            fusion_method="rrf"
+        )
+        for i, result in enumerate(hybrid_results_rrf, 1):
+            sources = ', '.join(result.get('sources', ['unknown']))
+            rrf_info = f"RRF: {result.get('rrf_score', 0):.4f}" if 'rrf_score' in result else ""
+            print(f"  {i}. Score: {result['combined_score']:.3f} {rrf_info} | Sources: [{sources}]")
+            print(f"     {result['content'][:80]}...")
+        
+        # Test with filters
+        print("\n5 Filtered Hybrid Search (Programming/Beginner):")
+        filtered_results = await rag.hybrid_search(
+            "How to use lists in Python?",
             subject="programming",
             student_level="beginner",
             top_k=2
         )
+        for i, result in enumerate(filtered_results, 1):
+            metadata = result.get('metadata', {})
+            print(f"  {i}. {metadata.get('subject')}/{metadata.get('level')} | Score: {result['combined_score']:.3f}")
+            print(f"     {result['content'][:80]}...")
         
-        print(f"Retrieved {len(results)} results")
-        for i, result in enumerate(results, 1):
-            print(f"  {i}. {result['content'][:80]}... (score: {result['score']:.3f})")
+        # Test reranking if available
+        if reranker.initialized and hybrid_results_weighted:
+            print("\n6 Re-ranked Results:")
+            reranked = reranker.rerank_for_learning(
+                hybrid_results_weighted,
+                test_query,
+                top_k=2
+            )
+            for i, result in enumerate(reranked, 1):
+                print(f"  {i}. Rerank Score: {result['rerank_score']:.3f} | {result['content'][:80]}...")
         
-        print("\nRAG system test complete!")
+        print("\n" + "=" * 60)
+        print(" RAG system test complete!")
+        print("\nKey Features Demonstrated:")
+        print("  • Semantic search using embeddings")
+        print("  • BM25 keyword search")
+        print("  • Hybrid search with weighted fusion")
+        print("  • Hybrid search with RRF fusion")
+        print("  • Subject and level filtering")
+        if reranker.initialized:
+            print("  • Cross-encoder re-ranking")
     
     # Run test
     asyncio.run(test_rag())

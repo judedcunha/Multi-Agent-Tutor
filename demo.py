@@ -1,6 +1,6 @@
 """
-Phase 2 Demo Script
-Demonstrates LLM Integration, Specialized Agents, and Advanced RAG
+Phase 2 Demo Script - Hybrid Search
+Demonstrates LLM Integration, Specialized Agents, and Advanced RAG with BM25
 """
 
 import sys
@@ -284,13 +284,18 @@ async def demo_advanced_rag():
         
         if not rag.initialized:
             print("WARNING: RAG system not fully initialized")
-            print("   Install dependencies: pip install chromadb sentence-transformers")
+            print("   Install dependencies: pip install chromadb sentence-transformers rank-bm25")
             print("   Skipping RAG demos...\n")
             return False
+        
+        # Check search capabilities
+        stats = await rag.get_search_statistics()
         
         print("PASS: RAG System initialized")
         print(f"   Vector DB: ChromaDB")
         print(f"   Embedder: Sentence Transformers")
+        print(f"   BM25 Search: {'Available' if stats.get('bm25_available') else 'Not available'}")
+        print(f"   Hybrid Search: {'Available' if stats.get('hybrid_search_available') else 'Semantic only'}")
         print(f"   Reranker: Cross-Encoder\n")
         
         # Demo 1: Index Content
@@ -299,23 +304,28 @@ async def demo_advanced_rag():
         sample_content = [
             {
                 'id': 'py_lists_1',
-                'text': 'Python lists are ordered, mutable collections that can store items of different types. They are defined using square brackets.',
+                'text': 'Python lists are ordered, mutable collections that can store items of different types. You can use append() to add items and pop() to remove them.',
                 'metadata': {'subject': 'programming', 'level': 'beginner', 'topic': 'python lists'}
             },
             {
                 'id': 'py_loops_1',
-                'text': 'For loops in Python allow you to iterate over sequences like lists, tuples, and strings. They use the syntax: for item in sequence.',
+                'text': 'For loops in Python allow you to iterate over sequences like lists, tuples, and strings. The syntax is: for item in sequence.',
                 'metadata': {'subject': 'programming', 'level': 'beginner', 'topic': 'python loops'}
             },
             {
                 'id': 'py_functions_1',
-                'text': 'Functions in Python are defined using the def keyword and allow code reuse. They can accept parameters and return values.',
+                'text': 'Functions in Python are defined using the def keyword and allow code reuse. They can accept parameters and return values using the return statement.',
                 'metadata': {'subject': 'programming', 'level': 'beginner', 'topic': 'python functions'}
             },
             {
                 'id': 'math_algebra_1',
                 'text': 'Algebra involves solving equations with unknown variables. Basic algebra uses operations like addition, subtraction, multiplication, and division.',
                 'metadata': {'subject': 'math', 'level': 'beginner', 'topic': 'algebra'}
+            },
+            {
+                'id': 'py_comprehensions_1',
+                'text': 'List comprehensions provide a concise way to create lists in Python. Example: squares = [x**2 for x in range(10)]',
+                'metadata': {'subject': 'programming', 'level': 'intermediate', 'topic': 'comprehensions'}
             }
         ]
         
@@ -323,66 +333,133 @@ async def demo_advanced_rag():
         success = await rag.index_educational_content(sample_content)
         
         if success:
-            print(f"PASS: Successfully indexed {len(sample_content)} documents\n")
+            print(f"PASS: Successfully indexed {len(sample_content)} documents")
+            
+            # Check if BM25 index was built
+            if hasattr(rag, 'bm25_index') and rag.bm25_index is not None:
+                print(f"PASS: BM25 index built with {len(rag.bm25_corpus)} documents\n")
+            else:
+                print("INFO: BM25 index not built (library may not be available)\n")
         else:
             print("FAIL: Failed to index content\n")
             return False
         
-        # Demo 2: Semantic Search
-        print_subsection("Demo 2: Semantic Search")
+        # Demo 2: Compare Search Methods
+        print_subsection("Demo 2: Compare Search Methods (Semantic vs BM25 vs Hybrid)")
         
-        query = "How do I work with lists in Python?"
-        print(f"Query: '{query}'")
-        print(f"Searching for top 3 results...\n")
+        query = "How to use append and pop methods with Python lists?"
+        print(f"Query: '{query}'\n")
         
-        results = await rag.retrieve_educational_content(
+        # Semantic Search
+        print("2.1 SEMANTIC SEARCH (Conceptual Understanding)")
+        print("-" * 50)
+        semantic_results = await rag.semantic_search(query, top_k=3)
+        
+        for i, result in enumerate(semantic_results, 1):
+            print(f"Result {i}:")
+            print(f"  Content: {result['content'][:80]}...")
+            print(f"  Semantic Score: {result['score']:.3f}")
+            print(f"  Source: {result.get('source', 'semantic')}\n")
+        
+        # BM25 Keyword Search (if available)
+        if stats.get('bm25_available'):
+            print("2.2 BM25 KEYWORD SEARCH (Exact Term Matching)")
+            print("-" * 50)
+            keyword_results = await rag.keyword_search(query, top_k=3)
+            
+            for i, result in enumerate(keyword_results, 1):
+                print(f"Result {i}:")
+                print(f"  Content: {result['content'][:80]}...")
+                print(f"  BM25 Score: {result['score']:.3f}")
+                if 'bm25_raw_score' in result:
+                    print(f"  BM25 Raw: {result['bm25_raw_score']:.2f}")
+                print(f"  Source: {result.get('source', 'bm25')}\n")
+        
+        # Hybrid Search
+        print("2.3 HYBRID SEARCH (Best of Both)")
+        print("-" * 50)
+        hybrid_results = await rag.hybrid_search(
             query=query,
-            subject="programming",
-            student_level="beginner",
-            top_k=3
+            top_k=3,
+            semantic_weight=0.6,
+            bm25_weight=0.4,
+            fusion_method="weighted"
         )
         
-        print("Search Results:")
-        print("-" * 70)
-        for i, result in enumerate(results, 1):
-            print(f"\nResult {i}:")
-            print(f"  Content: {result['content'][:100]}...")
-            print(f"  Score: {result['score']:.3f}")
-            print(f"  Relevance: {result['relevance']}")
-        print("-" * 70)
-        print(f"PASS: Retrieved {len(results)} relevant documents\n")
-        
-        # Demo 3: Hybrid Search
-        print_subsection("Demo 3: Hybrid Search (Semantic + Keyword)")
-        
-        query = "Python iteration"
-        print(f"Query: '{query}'")
-        print(f"Using hybrid search...\n")
-        
-        results = await rag.hybrid_search(
-            query=query,
-            subject="programming",
-            student_level="beginner",
-            top_k=2
-        )
-        
-        print("Hybrid Search Results:")
-        print("-" * 70)
-        for i, result in enumerate(results, 1):
-            print(f"\nResult {i}:")
-            print(f"  Content: {result['content'][:100]}...")
+        for i, result in enumerate(hybrid_results, 1):
+            print(f"Result {i}:")
+            print(f"  Content: {result['content'][:80]}...")
             print(f"  Combined Score: {result.get('combined_score', 0):.3f}")
-        print("-" * 70)
-        print(f"PASS: Hybrid search complete\n")
+            
+            # Show source attribution
+            sources = result.get('sources', [])
+            if sources:
+                print(f"  Sources: {' + '.join(sources)}")
+                if 'semantic_score' in result and 'semantic' in sources:
+                    print(f"    - Semantic: {result['semantic_score']:.3f}")
+                if 'bm25_score' in result and 'bm25' in sources:
+                    print(f"    - BM25: {result['bm25_score']:.3f}")
+            print()
+        
+        print(f"PASS: Search comparison complete\n")
+        
+        # Demo 3: Different Fusion Methods
+        print_subsection("Demo 3: Hybrid Search Fusion Methods")
+        
+        query = "Python functions and parameters"
+        print(f"Query: '{query}'\n")
+        
+        # Weighted Fusion
+        print("3.1 WEIGHTED FUSION (60% Semantic, 40% BM25)")
+        print("-" * 50)
+        weighted_results = await rag.hybrid_search(
+            query=query,
+            top_k=2,
+            semantic_weight=0.6,
+            bm25_weight=0.4,
+            fusion_method="weighted"
+        )
+        
+        for i, result in enumerate(weighted_results, 1):
+            print(f"Result {i}:")
+            print(f"  Content: {result['content'][:100]}...")
+            print(f"  Weighted Score: {result.get('combined_score', 0):.3f}")
+            sources = result.get('sources', [])
+            if sources:
+                print(f"  Contributing Methods: {' + '.join(sources)}")
+        print()
+        
+        # RRF Fusion (if BM25 available)
+        if stats.get('bm25_available'):
+            print("3.2 RECIPROCAL RANK FUSION (RRF)")
+            print("-" * 50)
+            rrf_results = await rag.hybrid_search(
+                query=query,
+                top_k=2,
+                fusion_method="rrf"
+            )
+            
+            for i, result in enumerate(rrf_results, 1):
+                print(f"Result {i}:")
+                print(f"  Content: {result['content'][:100]}...")
+                if 'rrf_score' in result:
+                    print(f"  RRF Score: {result['rrf_score']:.4f}")
+                print(f"  Normalized Score: {result.get('combined_score', 0):.3f}")
+                sources = result.get('sources', [])
+                if sources:
+                    print(f"  Contributing Methods: {' + '.join(sources)}")
+            print()
+        
+        print(f"PASS: Fusion methods demonstration complete\n")
         
         # Demo 4: Re-ranking
         print_subsection("Demo 4: Cross-Encoder Re-ranking")
         
-        if reranker.initialized and results:
-            print("Re-ranking results for better relevance...")
+        if reranker.initialized and hybrid_results:
+            print("Re-ranking hybrid search results for better relevance...")
             
             reranked = reranker.rerank_for_learning(
-                candidates=results,
+                candidates=hybrid_results,
                 query=query,
                 student_level="beginner"
             )
@@ -394,16 +471,33 @@ async def demo_advanced_rag():
                 print(f"  Content: {result['content'][:100]}...")
                 if 'rerank_score' in result:
                     print(f"  Rerank Score: {result['rerank_score']:.3f}")
+                if 'rerank_score_raw' in result:
+                    print(f"  Rerank Raw: {result['rerank_score_raw']:.2f}")
             print("-" * 70)
             print("PASS: Re-ranking complete\n")
         else:
             print("WARNING: Re-ranker not available or no results to rerank\n")
         
+        # Final Statistics
+        print_subsection("Demo 5: Search System Statistics")
+        final_stats = await rag.get_search_statistics()
+        
+        print("System Capabilities:")
+        print("-" * 50)
+        print(f"ChromaDB Initialized: {'✅' if final_stats['chromadb_initialized'] else '❌'}")
+        print(f"BM25 Available: {'✅' if final_stats.get('bm25_available') else '❌'}")
+        print(f"BM25 Index Built: {'✅' if final_stats['bm25_initialized'] else '❌'}")
+        print(f"Hybrid Search Ready: {'✅' if final_stats['hybrid_search_available'] else '❌'}")
+        print(f"Total Documents: {final_stats['total_documents']}")
+        if 'chromadb_document_count' in final_stats:
+            print(f"ChromaDB Documents: {final_stats['chromadb_document_count']}")
+        print()
+        
         return True
         
     except ImportError as e:
         print(f"FAIL: RAG System not available: {e}")
-        print("   Install with: pip install chromadb sentence-transformers")
+        print("   Install with: pip install chromadb sentence-transformers rank-bm25")
         return False
 
 
@@ -458,6 +552,8 @@ async def demo_integrated_system():
             rag = status['rag_details']
             print(f"    - Vector DB: {rag.get('vector_db', 'N/A')}")
             print(f"    - Embedder: {rag.get('embedder', 'N/A')}")
+            print(f"    - BM25 Search: {rag.get('bm25_search', 'N/A')}")
+            print(f"    - Hybrid Search: {rag.get('hybrid_search', 'N/A')}")
             print(f"    - Reranker: {rag.get('reranker', 'N/A')}")
         print("-" * 70)
         
@@ -511,12 +607,12 @@ async def demo_integrated_system():
 async def main():
     """Run all Phase 2 demos"""
     print("\n" + "=" * 70)
-    print("  PHASE 2 DEMONSTRATION: LLM, Specialized Agents, and Advanced RAG")
+    print("  PHASE 2 DEMONSTRATION: LLM, Agents, and Hybrid Search RAG")
     print("=" * 70)
-    print("\nThis demo showcases the new Phase 2 features:")
+    print("\nThis demo showcases the Phase 2 features:")
     print("  1. Educational LLM Manager (OpenAI/Ollama)")
     print("  2. Specialized Subject Agents (Math/Science/Programming)")
-    print("  3. Advanced RAG System (ChromaDB + Semantic Search)")
+    print("  3. Advanced RAG with TRUE HYBRID SEARCH (BM25 + Semantic)")
     print("  4. Integrated Multi-Agent System")
     print("\nNote: Some features require API keys or additional setup.")
     print("See docs/PHASE2_COMPLETE.md for configuration details.\n")
@@ -537,14 +633,14 @@ async def main():
     demos = [
         "LLM Manager",
         "Specialized Agents",
-        "Advanced RAG",
+        "Advanced RAG (Hybrid Search)",
         "Integrated System"
     ]
     
     print("Demo Results:")
     print("-" * 70)
     for demo, result in zip(demos, results):
-        status = "PASS" if result else "SKIPPED/FAILED"
+        status = "✅ PASS" if result else "❌ SKIPPED/FAILED"
         print(f"{status}  {demo}")
     print("-" * 70)
     
@@ -554,21 +650,17 @@ async def main():
     print(f"\n{passed}/{total} demos completed successfully")
     
     if passed == total:
-        print("\nSUCCESS: All Phase 2 features are working!")
+        print("\n✅ SUCCESS: All Phase 2 features are working!")
+        print("   Including TRUE hybrid search with BM25 + Semantic!")
     elif passed > 0:
-        print("\nPARTIAL: Some Phase 2 features are working")
+        print("\n⚠️ PARTIAL: Some Phase 2 features are working")
         print("   Check configuration for features that were skipped")
     else:
-        print("\nWARNING: Phase 2 features not available")
+        print("\n❌ WARNING: Phase 2 features not available")
         print("   Install dependencies: pip install -r requirements.txt")
         print("   Configure API keys in .env file")
     
-    print("\nFor more information:")
-    print("   - docs/PHASE2_COMPLETE.md (Full documentation)")
-    print("   - verify_phase2.py (Check installation)")
-    print("   - .env (Configuration file)")
-    print()
-
+   
 
 if __name__ == "__main__":
     asyncio.run(main())
