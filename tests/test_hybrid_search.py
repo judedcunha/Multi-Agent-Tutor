@@ -7,7 +7,8 @@ import asyncio
 import sys
 import os
 # Add src directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 
 from rag.educational_retrieval import create_rag_system
 from colorama import Fore, Style, init
