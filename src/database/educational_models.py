@@ -125,7 +125,7 @@ class ContentCache(Base):
     cache_key = Column(String(200), unique=True, index=True)
     content_type = Column(String(50))  # lesson, practice, explanation
     content = Column(JSON)
-    metadata = Column(JSON)
+    cache_metadata = Column(JSON)  
     created_at = Column(DateTime, default=datetime.utcnow)
     accessed_at = Column(DateTime, default=datetime.utcnow)
     access_count = Column(Integer, default=1)

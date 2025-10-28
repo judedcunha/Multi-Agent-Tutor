@@ -3,16 +3,25 @@ import os
 import logging
 from typing import Dict, Any, Optional, List
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, Depends
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import uvicorn
 from dotenv import load_dotenv
+from sqlalchemy.orm import Session
 
 # Import the agents
 from agents.ai_tutor import UniversalAITutor, LearningProfile
 from agents.tutoring_graph import AdvancedTutoringSystem
 from agents.state_schema import StudentProfile
+
+# Phase 3 imports
+from api.educational_streaming import streaming_manager
+from api.websocket_routes import websocket_endpoint, websocket_admin
+from database.db_manager import db_manager, get_db
+from database.educational_crud import educational_crud
+from optimization.educational_caching import cache_manager
+from optimization.cache_decorators import cache_lesson, cache_result
 
 # Load environment variables
 load_dotenv()
@@ -40,24 +49,40 @@ async def lifespan(app: FastAPI):
     logger.info("Starting up AI Tutor system...")
     
     try:
+        # Initialize Phase 1-2 systems
         ai_tutor = UniversalAITutor(use_local_model=True)
         advanced_system = AdvancedTutoringSystem(use_local_model=False)
         logger.info("AI Tutor system initialized successfully")
+        
+        # Phase 3: Initialize database
+        db_manager.initialize()
+        logger.info("Database initialized")
+        
+        # Phase 3: Initialize Redis cache
+        cache_manager.initialize()
+        logger.info("Redis cache initialized")
+        
+        # Phase 3: Initialize streaming manager
+        await streaming_manager.initialize(advanced_system)
+        logger.info("WebSocket streaming initialized")
+        
     except Exception as e:
-        logger.error(f"Failed to initialize tutoring systems: {str(e)}")
+        logger.error(f"Failed to initialize systems: {str(e)}")
         # Don't raise - allow app to start in degraded mode
     
     yield  # Server runs here
     
     # Shutdown (cleanup if needed)
-    logger.info("✓ Shutting down AI Tutor system...")
-    # Add cleanup code here if needed (close connections, save state, etc.)
+    logger.info("Shutting down AI Tutor system...")
+    # Clean up database connections
+    db_manager.close()
+    logger.info("Cleanup complete")
 
 # FastAPI app with lifespan
 app = FastAPI(
     title="AI Tutor",
-    description="Advanced multi-agent educational tutoring platform with LangGraph orchestration",
-    version="1",
+    description="Advanced multi-agent educational tutoring platform with LangGraph orchestration and real-time streaming",
+    version="3.0",
     lifespan=lifespan
 )
 
@@ -583,6 +608,103 @@ async def student_guide():
         "cost": "0",
         "academic_integrity": "Perfect for learning concepts and understanding. Always do your own work for assignments!"
     }
+
+# Phase 3: WebSocket endpoints
+@app.websocket("/ws/learn")
+async def websocket_learn(websocket: WebSocket):
+    """WebSocket endpoint for real-time learning sessions"""
+    await websocket_endpoint(websocket)
+
+
+@app.websocket("/ws/admin")
+async def websocket_admin_endpoint(websocket: WebSocket):
+    """Admin WebSocket endpoint for monitoring active sessions"""
+    await websocket_admin(websocket)
+
+
+# Phase 3: Database endpoints
+@app.post("/students/create")
+async def create_student(
+    name: str,
+    email: Optional[str] = None,
+    level: str = "beginner",
+    learning_style: str = "mixed",
+    db: Session = Depends(get_db)
+):
+    """Create a new student profile"""
+    student = educational_crud.create_student(db, name, email, level, learning_style)
+    return {
+        "status": "success",
+        "student_id": student.student_id,
+        "message": f"Student profile created for {name}"
+    }
+
+
+@app.get("/students/{student_id}")
+async def get_student(student_id: str, db: Session = Depends(get_db)):
+    """Get student profile and progress"""
+    student = educational_crud.get_student(db, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    
+    progress = educational_crud.get_student_progress_summary(db, student_id)
+    
+    return {
+        "student": {
+            "id": student.student_id,
+            "name": student.name,
+            "level": student.level,
+            "learning_style": student.learning_style
+        },
+        "progress": progress
+    }
+
+
+@app.get("/students/{student_id}/history")
+async def get_student_history(
+    student_id: str,
+    limit: int = 10,
+    db: Session = Depends(get_db)
+):
+    """Get student's learning history"""
+    history = educational_crud.get_student_history(db, student_id, limit)
+    return {
+        "student_id": student_id,
+        "sessions": [
+            {
+                "session_id": s.session_id,
+                "topic": s.topic,
+                "subject": s.subject,
+                "started_at": s.started_at.isoformat(),
+                "duration_minutes": s.duration_minutes
+            }
+            for s in history
+        ]
+    }
+
+
+@app.delete("/students/{student_id}")
+async def delete_student(student_id: str, db: Session = Depends(get_db)):
+    """Delete a student and all related data (GDPR compliance)"""
+    success = educational_crud.delete_student(db, student_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Student not found")
+    return {
+        "status": "success",
+        "message": f"Student {student_id} and all related data deleted"
+    }
+
+
+@app.get("/streaming/status")
+async def get_streaming_status():
+    """Get WebSocket streaming status"""
+    active_sessions = streaming_manager.get_active_sessions()
+    return {
+        "active_connections": streaming_manager.active_connections,
+        "sessions": active_sessions,
+        "status": "operational"
+    }
+
 
 if __name__ == "__main__":
     print("Starting")

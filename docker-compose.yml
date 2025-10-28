@@ -6,7 +6,7 @@ services:
     container_name: tutor_postgres
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: postgres
       POSTGRES_DB: educational_tutor
     ports:
       - "5432:5432"
