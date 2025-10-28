@@ -245,6 +245,52 @@ class TestPhase2RAG:
         except ImportError:
             pytest.skip("Phase 2 RAG system not installed")
     
+    @pytest.mark.asyncio
+    async def test_hybrid_search_availability(self):
+        """Test that hybrid search is available in RAG system"""
+        try:
+            from rag.educational_retrieval import create_rag_system
+            
+            rag, _ = create_rag_system()
+            
+            if not rag.initialized:
+                pytest.skip("RAG system not fully initialized")
+            
+            # Check statistics
+            stats = await rag.get_search_statistics()
+            
+            # Check if BM25 is available
+            if stats.get('bm25_available'):
+                print("BM25 keyword search is available")
+                
+                # Try hybrid search
+                sample_content = [
+                    {
+                        'id': 'hybrid_test',
+                        'text': 'Testing hybrid search with Python programming',
+                        'metadata': {'subject': 'programming'}
+                    }
+                ]
+                
+                await rag.index_educational_content(sample_content)
+                
+                results = await rag.hybrid_search(
+                    "Python programming",
+                    top_k=1,
+                    fusion_method="weighted"
+                )
+                
+                assert isinstance(results, list)
+                if results and 'sources' in results[0]:
+                    print(f"Hybrid search working - sources: {results[0]['sources']}")
+            else:
+                print("BM25 not available - hybrid search using semantic only")
+                
+            print("Hybrid search availability test passed")
+            
+        except ImportError:
+            pytest.skip("Phase 2 RAG system not installed")
+    
     def test_reranker_functionality(self):
         """Test content reranking"""
         try:

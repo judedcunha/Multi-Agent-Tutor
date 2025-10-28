@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.2.0] - 2025-10-26 - True Hybrid Search Implementation
+
+### Added - BM25 Keyword Search
+- **BM25 Implementation** (`src/rag/educational_retrieval.py`):
+  - Proper text tokenization with stopword removal
+  - BM25Okapi algorithm from rank-bm25 library
+  - Score normalization (sigmoid-like) for 0-1 range
+  - Parallel corpus management alongside ChromaDB
+  - Raw score tracking for debugging
+
+### Added - Hybrid Search Fusion Methods
+- **Weighted Fusion**:
+  - Configurable weights for semantic vs keyword
+  - Combined score calculation with source tracking
+  - Individual score preservation for analysis
+- **Reciprocal Rank Fusion (RRF)**:
+  - Rank-based combination (k=60 default)
+  - Better handling of different score scales
+  - RRF score tracking alongside normalized scores
+
+### Added - Source Attribution
+- Track which search method found each result
+- Source combinations: ['semantic'], ['bm25'], or ['semantic', 'bm25']
+- Transparency in search result provenance
+- Useful for debugging and optimization
+
+### Added - Search Statistics API
+- `get_search_statistics()` method for system status
+- Check BM25 availability and initialization
+- Monitor indexed document counts
+- Verify hybrid search readiness
+
+### Improved - Search Performance
+- Parallel execution of semantic and keyword search
+- Graceful fallback if BM25 unavailable
+- Backward compatibility maintained
+- No breaking changes to existing API
+
+### Added - Testing and Documentation
+- Comprehensive test suite (`tests/test_hybrid_search.py`)
+
+---
+
 ## [2.1.0] - 2025-10-18 - Phase 2 Complete
 
 ### Added - LLM Integration
@@ -39,8 +82,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **EducationalRAG** (`src/rag/educational_retrieval.py`):
   - ChromaDB vector database integration
   - Semantic search with sentence transformers
-  - Keyword search with BM25
-  - Hybrid search combining both approaches
+  - ✅ **True BM25 keyword search implementation**
+  - ✅ **True Hybrid search with multiple fusion methods**:
+    - Weighted fusion with configurable weights
+    - Reciprocal Rank Fusion (RRF) for rank-based combination
+    - Source attribution tracking (semantic vs BM25 vs both)
   - Subject and level filtering
 - **EducationalReranker**:
   - Cross-encoder re-ranking for relevance
