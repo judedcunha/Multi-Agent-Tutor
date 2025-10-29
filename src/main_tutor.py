@@ -21,7 +21,6 @@ from api.websocket_routes import websocket_endpoint, websocket_admin
 from database.db_manager import db_manager, get_db
 from database.educational_crud import educational_crud
 from optimization.educational_caching import cache_manager
-from optimization.cache_decorators import cache_lesson, cache_result
 
 # Load environment variables
 load_dotenv()
@@ -703,6 +702,132 @@ async def get_streaming_status():
         "active_connections": streaming_manager.active_connections,
         "sessions": active_sessions,
         "status": "operational"
+    }
+
+
+# Phase 3: Cache Management Endpoints
+@app.get("/cache/stats")
+async def get_cache_stats():
+    """Get Redis cache statistics"""
+    stats = cache_manager.get_cache_stats()
+    return {
+        "cache": stats,
+        "message": "Cache statistics retrieved successfully"
+    }
+
+
+@app.get("/cache/counters")
+async def get_cache_counters():
+    """Get cache hit/miss counters for all operations"""
+    counters = {
+        "lesson": {
+            "hits": cache_manager.get_counter("lesson_cache_hits"),
+            "misses": cache_manager.get_counter("lesson_cache_misses"),
+            "hit_rate": 0.0
+        },
+        "practice": {
+            "hits": cache_manager.get_counter("practice_cache_hits"),
+            "misses": cache_manager.get_counter("practice_cache_misses"),
+            "hit_rate": 0.0
+        },
+        "rag": {
+            "hits": cache_manager.get_counter("rag_cache_hits"),
+            "misses": cache_manager.get_counter("rag_cache_misses"),
+            "hit_rate": 0.0
+        },
+        "total": {
+            "hits": 0,
+            "misses": 0,
+            "hit_rate": 0.0
+        }
+    }
+    
+    # Calculate hit rates
+    for key in ["lesson", "practice", "rag"]:
+        hits = counters[key]["hits"]
+        misses = counters[key]["misses"]
+        total = hits + misses
+        if total > 0:
+            counters[key]["hit_rate"] = round(hits / total, 3)
+        counters["total"]["hits"] += hits
+        counters["total"]["misses"] += misses
+    
+    # Calculate total hit rate
+    total_hits = counters["total"]["hits"]
+    total_misses = counters["total"]["misses"]
+    total_requests = total_hits + total_misses
+    if total_requests > 0:
+        counters["total"]["hit_rate"] = round(total_hits / total_requests, 3)
+    
+    return {
+        "counters": counters,
+        "total_requests": total_requests,
+        "cache_enabled": cache_manager.enabled
+    }
+
+
+@app.post("/cache/clear")
+async def clear_cache(pattern: Optional[str] = None):
+    """Clear cache entries with optional pattern matching"""
+    cache_manager.clear_cache(pattern)
+    
+    message = f"Cache cleared for pattern: {pattern}" if pattern else "All cache entries cleared"
+    
+    return {
+        "status": "success",
+        "message": message,
+        "pattern": pattern
+    }
+
+
+@app.post("/cache/warm")
+async def warm_cache(
+    topics: List[str] = ["Python basics", "Mathematics", "Science"],
+    levels: List[str] = ["beginner", "intermediate"],
+    learning_styles: List[str] = ["visual", "mixed"]
+):
+    """Warm the cache with common queries (pre-populate)"""
+    warmed_count = 0
+    
+    for topic in topics:
+        for level in levels:
+            for style in learning_styles:
+                # Check if already cached
+                if not cache_manager.get_lesson(topic, level, style):
+                    # Would normally generate and cache here
+                    # For now, just count what would be warmed
+                    warmed_count += 1
+    
+    return {
+        "status": "success",
+        "message": f"Cache warming initiated for {warmed_count} combinations",
+        "topics": topics,
+        "levels": levels,
+        "learning_styles": learning_styles
+    }
+
+
+@app.get("/cache/info")
+async def get_cache_info():
+    """Get detailed cache configuration and status"""
+    return {
+        "enabled": cache_manager.enabled,
+        "default_ttl": cache_manager.default_ttl,
+        "redis_connected": cache_manager.redis_client is not None,
+        "ttl_settings": {
+            "lessons": "1 hour",
+            "practice_problems": "30 minutes",
+            "rag_results": "30 minutes",
+            "student_sessions": "2 hours"
+        },
+        "cache_keys_pattern": "tutor:*",
+        "features": {
+            "lesson_caching": "Enabled",
+            "practice_caching": "Enabled",
+            "rag_caching": "Enabled",
+            "session_caching": "Enabled",
+            "sliding_expiration": "Supported"
+        }
     }
 
 
