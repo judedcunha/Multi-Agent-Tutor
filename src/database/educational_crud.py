@@ -7,10 +7,12 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 import uuid
 
-from database.educational_models import (
+from .educational_models import (
     Student, LearningSession, LearningInteraction,
-    StudentProgress, StudentPreference
+    StudentProgress, StudentPreference,
+    LearningAnalytics, PracticeAnalytics, TopicAnalytics, DailyMetrics
 )
+from sqlalchemy import func, and_, or_, desc
 
 
 class EducationalCRUD:
@@ -258,3 +260,279 @@ class EducationalCRUD:
 
 # Global CRUD instance
 educational_crud = EducationalCRUD()
+
+
+class AnalyticsCRUD:
+    """CRUD operations for analytics data"""
+    
+    @staticmethod
+    def create_learning_analytics(db: Session, session_id: str, 
+                                  student_id: str) -> LearningAnalytics:
+        """Create learning analytics record"""
+        analytics = LearningAnalytics(
+            analytics_id=str(uuid.uuid4()),
+            session_id=session_id,
+            student_id=student_id
+        )
+        db.add(analytics)
+        db.commit()
+        db.refresh(analytics)
+        return analytics
+    
+    @staticmethod
+    def update_learning_analytics(db: Session, session_id: str, **kwargs) -> Optional[LearningAnalytics]:
+        """Update learning analytics"""
+        analytics = db.query(LearningAnalytics).filter(
+            LearningAnalytics.session_id == session_id
+        ).first()
+        
+        if analytics:
+            for key, value in kwargs.items():
+                if hasattr(analytics, key):
+                    setattr(analytics, key, value)
+            analytics.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(analytics)
+        return analytics
+    
+    @staticmethod
+    def create_practice_analytics(db: Session, session_id: str, student_id: str,
+                                 problem_data: Dict[str, Any]) -> PracticeAnalytics:
+        """Record practice problem analytics"""
+        practice = PracticeAnalytics(
+            practice_id=str(uuid.uuid4()),
+            session_id=session_id,
+            student_id=student_id,
+            **problem_data
+        )
+        db.add(practice)
+        db.commit()
+        db.refresh(practice)
+        return practice
+    
+    @staticmethod
+    def get_or_create_topic_analytics(db: Session, student_id: str, 
+                                      topic: str, subject: str) -> TopicAnalytics:
+        """Get or create topic analytics"""
+        topic_analytics = db.query(TopicAnalytics).filter(
+            TopicAnalytics.student_id == student_id,
+            TopicAnalytics.topic == topic
+        ).first()
+        
+        if not topic_analytics:
+            topic_analytics = TopicAnalytics(
+                student_id=student_id,
+                topic=topic,
+                subject=subject
+            )
+            db.add(topic_analytics)
+            db.commit()
+            db.refresh(topic_analytics)
+        
+        return topic_analytics
+    
+    @staticmethod
+    def update_topic_analytics(db: Session, student_id: str, topic: str,
+                              **metrics) -> Optional[TopicAnalytics]:
+        """Update topic analytics metrics"""
+        topic_analytics = AnalyticsCRUD.get_or_create_topic_analytics(
+            db, student_id, topic, metrics.get('subject', 'general')
+        )
+        
+        # Increment counters
+        if 'request_count' in metrics:
+            topic_analytics.request_count += metrics['request_count']
+        if 'practice_attempted' in metrics:
+            topic_analytics.practice_attempted += metrics['practice_attempted']
+        if 'practice_correct' in metrics:
+            topic_analytics.practice_correct += metrics['practice_correct']
+        if 'session_time' in metrics:
+            topic_analytics.total_time_minutes += metrics['session_time']
+        
+        # Update calculations
+        if topic_analytics.practice_attempted > 0:
+            topic_analytics.success_rate = (
+                topic_analytics.practice_correct / topic_analytics.practice_attempted
+            )
+        
+        topic_analytics.last_accessed = datetime.utcnow()
+        db.commit()
+        return topic_analytics
+    
+    @staticmethod
+    def get_daily_metrics(db: Session, student_id: str, date: datetime) -> Optional[DailyMetrics]:
+        """Get daily metrics for a student"""
+        start_of_day = datetime.combine(date.date(), datetime.min.time())
+        return db.query(DailyMetrics).filter(
+            DailyMetrics.student_id == student_id,
+            DailyMetrics.date == start_of_day
+        ).first()
+    
+    @staticmethod
+    def create_or_update_daily_metrics(db: Session, student_id: str,
+                                       date: datetime, metrics: Dict[str, Any]) -> DailyMetrics:
+        """Create or update daily metrics"""
+        start_of_day = datetime.combine(date.date(), datetime.min.time())
+        
+        daily_metric = AnalyticsCRUD.get_daily_metrics(db, student_id, date)
+        
+        if not daily_metric:
+            daily_metric = DailyMetrics(
+                student_id=student_id,
+                date=start_of_day
+            )
+            db.add(daily_metric)
+        
+        # Update metrics
+        for key, value in metrics.items():
+            if hasattr(daily_metric, key):
+                setattr(daily_metric, key, value)
+        
+        db.commit()
+        db.refresh(daily_metric)
+        return daily_metric
+    
+    @staticmethod
+    def get_student_analytics_summary(db: Session, student_id: str,
+                                      days: int = 30) -> Dict[str, Any]:
+        """Get comprehensive analytics summary for a student"""
+        start_date = datetime.utcnow() - timedelta(days=days)
+        
+        # Session stats
+        session_stats = db.query(
+            func.count(LearningSession.id).label('total_sessions'),
+            func.sum(LearningSession.duration_minutes).label('total_time')
+        ).filter(
+            LearningSession.student_id == student_id,
+            LearningSession.started_at >= start_date
+        ).first()
+        
+        # Practice stats
+        practice_stats = db.query(
+            func.count(PracticeAnalytics.id).label('total_problems'),
+            func.sum(PracticeAnalytics.correct.cast(db.Integer)).label('correct_problems')
+        ).filter(
+            PracticeAnalytics.student_id == student_id,
+            PracticeAnalytics.timestamp >= start_date
+        ).first()
+        
+        # Top topics
+        top_topics = db.query(TopicAnalytics).filter(
+            TopicAnalytics.student_id == student_id
+        ).order_by(desc(TopicAnalytics.request_count)).limit(5).all()
+        
+        # Recent activity
+        recent_sessions = db.query(LearningSession).filter(
+            LearningSession.student_id == student_id,
+            LearningSession.started_at >= start_date
+        ).order_by(desc(LearningSession.started_at)).limit(10).all()
+        
+        return {
+            'period_days': days,
+            'sessions': {
+                'total': session_stats.total_sessions or 0,
+                'total_time_hours': (session_stats.total_time or 0) / 60
+            },
+            'practice': {
+                'total_problems': practice_stats.total_problems or 0,
+                'correct_problems': practice_stats.correct_problems or 0,
+                'accuracy': (
+                    (practice_stats.correct_problems or 0) / (practice_stats.total_problems or 1)
+                    if practice_stats.total_problems else 0
+                )
+            },
+            'top_topics': [
+                {
+                    'topic': t.topic,
+                    'subject': t.subject,
+                    'sessions': t.total_sessions,
+                    'mastery': t.mastery_level
+                }
+                for t in top_topics
+            ],
+            'recent_sessions': [
+                {
+                    'session_id': s.session_id,
+                    'topic': s.topic,
+                    'duration': s.duration_minutes,
+                    'date': s.started_at.isoformat()
+                }
+                for s in recent_sessions
+            ]
+        }
+    
+    @staticmethod
+    def get_topic_trends(db: Session, student_id: str, topic: str,
+                        days: int = 30) -> List[Dict[str, Any]]:
+        """Get performance trends for a specific topic"""
+        start_date = datetime.utcnow() - timedelta(days=days)
+        
+        # Get practice history
+        practice_history = db.query(PracticeAnalytics).filter(
+            PracticeAnalytics.student_id == student_id,
+            PracticeAnalytics.topic == topic,
+            PracticeAnalytics.timestamp >= start_date
+        ).order_by(PracticeAnalytics.timestamp).all()
+        
+        trends = []
+        for practice in practice_history:
+            trends.append({
+                'date': practice.timestamp.isoformat(),
+                'correct': practice.correct,
+                'difficulty': practice.difficulty,
+                'time_spent': practice.time_spent_seconds,
+                'hints_used': practice.hints_used
+            })
+        
+        return trends
+    
+    @staticmethod
+    def calculate_learning_streak(db: Session, student_id: str) -> Dict[str, int]:
+        """Calculate learning streaks for a student"""
+        # Get daily metrics for the last 90 days
+        start_date = datetime.utcnow() - timedelta(days=90)
+        
+        daily_metrics = db.query(DailyMetrics).filter(
+            DailyMetrics.student_id == student_id,
+            DailyMetrics.date >= start_date
+        ).order_by(desc(DailyMetrics.date)).all()
+        
+        if not daily_metrics:
+            return {'current_streak': 0, 'longest_streak': 0}
+        
+        # Calculate current streak
+        current_streak = 0
+        today = datetime.utcnow().date()
+        
+        for metric in daily_metrics:
+            expected_date = today - timedelta(days=current_streak)
+            if metric.date.date() == expected_date and metric.is_active_day:
+                current_streak += 1
+            else:
+                break
+        
+        # Calculate longest streak
+        longest_streak = current_streak
+        temp_streak = 0
+        
+        for i in range(len(daily_metrics)):
+            if daily_metrics[i].is_active_day:
+                if i == 0 or (
+                    daily_metrics[i-1].date.date() == 
+                    daily_metrics[i].date.date() + timedelta(days=1)
+                ):
+                    temp_streak += 1
+                    longest_streak = max(longest_streak, temp_streak)
+                else:
+                    temp_streak = 1
+            else:
+                temp_streak = 0
+        
+        return {
+            'current_streak': current_streak,
+            'longest_streak': longest_streak
+        }
+
+
+# Global Analytics CRUD instance
+analytics_crud = AnalyticsCRUD()

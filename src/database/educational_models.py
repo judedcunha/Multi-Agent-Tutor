@@ -130,3 +130,136 @@ class ContentCache(Base):
     accessed_at = Column(DateTime, default=datetime.utcnow)
     access_count = Column(Integer, default=1)
     ttl_hours = Column(Integer, default=24)
+
+
+# Analytics Models for Phase 3
+
+class LearningAnalytics(Base):
+    """Aggregated learning analytics per session"""
+    __tablename__ = 'learning_analytics'
+    
+    id = Column(Integer, primary_key=True)
+    analytics_id = Column(String(50), unique=True, index=True)
+    session_id = Column(String(50), ForeignKey('learning_sessions.session_id'))
+    student_id = Column(String(50), ForeignKey('students.student_id'))
+    
+    # Timing metrics
+    total_time_seconds = Column(Integer, default=0)
+    active_time_seconds = Column(Integer, default=0)
+    idle_time_seconds = Column(Integer, default=0)
+    
+    # Interaction metrics
+    total_interactions = Column(Integer, default=0)
+    questions_asked = Column(Integer, default=0)
+    hints_requested = Column(Integer, default=0)
+    
+    # Performance metrics
+    practice_attempted = Column(Integer, default=0)
+    practice_correct = Column(Integer, default=0)
+    practice_accuracy = Column(Float, default=0.0)  # 0.0 to 1.0
+    
+    # Engagement metrics
+    engagement_score = Column(Float, default=0.0)  # 0.0 to 1.0
+    completion_rate = Column(Float, default=0.0)  # 0.0 to 1.0
+    
+    # Agent usage
+    agents_triggered = Column(JSON)  # List of agent names and counts
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PracticeAnalytics(Base):
+    """Detailed practice problem performance tracking"""
+    __tablename__ = 'practice_analytics'
+    
+    id = Column(Integer, primary_key=True)
+    practice_id = Column(String(50), unique=True, index=True)
+    session_id = Column(String(50), ForeignKey('learning_sessions.session_id'))
+    student_id = Column(String(50), ForeignKey('students.student_id'))
+    
+    # Problem details
+    problem_number = Column(Integer)
+    problem_text = Column(Text)
+    topic = Column(String(200))
+    difficulty = Column(String(20))  # easy, medium, hard
+    
+    # Performance
+    attempts = Column(Integer, default=0)
+    correct = Column(Boolean, default=False)
+    time_spent_seconds = Column(Integer, default=0)
+    hints_used = Column(Integer, default=0)
+    
+    # Student response
+    student_answer = Column(Text, nullable=True)
+    correct_answer = Column(Text, nullable=True)
+    feedback_given = Column(Text, nullable=True)
+    
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+
+class TopicAnalytics(Base):
+    """Topic-level analytics per student"""
+    __tablename__ = 'topic_analytics'
+    
+    id = Column(Integer, primary_key=True)
+    student_id = Column(String(50), ForeignKey('students.student_id'), index=True)
+    topic = Column(String(200), index=True)
+    subject = Column(String(50))
+    
+    # Engagement metrics
+    request_count = Column(Integer, default=0)
+    total_sessions = Column(Integer, default=0)
+    total_time_minutes = Column(Float, default=0.0)
+    avg_session_duration = Column(Float, default=0.0)
+    
+    # Performance metrics
+    practice_attempted = Column(Integer, default=0)
+    practice_correct = Column(Integer, default=0)
+    success_rate = Column(Float, default=0.0)  # 0.0 to 1.0
+    mastery_level = Column(Float, default=0.0)  # 0.0 to 1.0
+    
+    # Temporal data
+    first_accessed = Column(DateTime, default=datetime.utcnow)
+    last_accessed = Column(DateTime, default=datetime.utcnow)
+    streak_days = Column(Integer, default=0)
+    
+    # Unique constraint on student_id + topic
+    __table_args__ = (
+        {'mysql_engine': 'InnoDB'},
+    )
+
+
+class DailyMetrics(Base):
+    """Pre-computed daily metrics for performance"""
+    __tablename__ = 'daily_metrics'
+    
+    id = Column(Integer, primary_key=True)
+    student_id = Column(String(50), ForeignKey('students.student_id'), index=True)
+    date = Column(DateTime, index=True)  # Date without time
+    
+    # Daily activity
+    sessions_count = Column(Integer, default=0)
+    total_time_minutes = Column(Float, default=0.0)
+    topics_studied = Column(JSON)  # List of topics
+    subjects_studied = Column(JSON)  # List of subjects
+    
+    # Daily performance
+    practice_problems_attempted = Column(Integer, default=0)
+    practice_problems_correct = Column(Integer, default=0)
+    daily_accuracy = Column(Float, default=0.0)
+    
+    # Engagement
+    engagement_score = Column(Float, default=0.0)
+    active_learning_time = Column(Float, default=0.0)  # In minutes
+    
+    # Streak tracking
+    is_active_day = Column(Boolean, default=True)
+    current_streak = Column(Integer, default=0)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Unique constraint on student_id + date
+    __table_args__ = (
+        {'mysql_engine': 'InnoDB'},
+    )

@@ -10,7 +10,7 @@ import logging
 from typing import Optional
 from fastapi import HTTPException
 
-from database.educational_models import Base
+from .educational_models import Base
 
 logger = logging.getLogger(__name__)
 

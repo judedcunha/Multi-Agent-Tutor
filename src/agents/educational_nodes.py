@@ -19,6 +19,9 @@ from optimization.cache_decorators import (
     cache_rag_search,
     cache_result
 )
+from monitoring.educational_analytics import analytics_manager
+import asyncio
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +38,8 @@ class EducationalNodes:
         tutor: UniversalAITutor,
         llm_manager=None,
         specialized_agents=None,
-        rag_system=None
+        rag_system=None,
+        analytics_manager=None
     ):
         """
         Initialize with a tutor instance 
@@ -45,11 +49,13 @@ class EducationalNodes:
             llm_manager: EducationalLLMManager for AI content 
             specialized_agents: Dict of specialized subject agents 
             rag_system: EducationalRAG for advanced retrieval 
+            analytics_manager: AnalyticsManager for tracking 
         """
         self.tutor = tutor
         self.llm_manager = llm_manager
         self.specialized_agents = specialized_agents or {}
         self.rag_system = rag_system
+        self.analytics_manager = analytics_manager
         
         phase2_features = []
         if llm_manager:
@@ -63,8 +69,10 @@ class EducationalNodes:
             logger.info(f"Educational nodes initialized with Phase 2: {', '.join(phase2_features)}")
         else:
             logger.info("Educational nodes initialized (Phase 1 only)")
+        
+        if analytics_manager:
+            logger.info("Analytics tracking enabled (Phase 3)")
     
-    @cache_agent_response(ttl=3600)
     def subject_expert_node(self, state: TutoringState) -> TutoringState:
         """
         Subject Expert Agent - Detects subject and determines learning path
@@ -73,8 +81,24 @@ class EducationalNodes:
         to appropriate specialized agents.
         """
         logger.info(f"Subject Expert analyzing: {state['learning_request']}")
+        start_time = time.time()
         
         try:
+            # Start analytics session if this is the first agent
+            if self.analytics_manager and not state.get('analytics_started'):
+                try:
+                    self.analytics_manager.record_session_start(
+                        session_id=state['session_id'],
+                        student_id=state['student_profile'].get('name', 'unknown'),
+                        topic=state['learning_request'],
+                        subject='pending',  # Will be detected
+                        level=state['student_profile'].get('level', 'beginner')
+                    )
+                    state['analytics_started'] = True
+                    logger.debug("Analytics session started")
+                except Exception as e:
+                    logger.warning(f"Failed to start analytics session: {e}")
+            
             # Use existing subject detection
             topic_analysis = self.tutor.detect_subject_and_level(state['learning_request'])
             
@@ -90,6 +114,18 @@ class EducationalNodes:
             
             logger.info(f"Detected: {detected_subject} at {detected_level} level (confidence: {confidence})")
             
+            # Track interaction
+            response_time = int((time.time() - start_time) * 1000)
+            if self.analytics_manager:
+                try:
+                    self.analytics_manager.record_interaction(
+                        session_id=state['session_id'],
+                        interaction_type='subject_detection',
+                        agent_name='subject_expert',
+                        response_time_ms=response_time
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to track interaction: {e}")
             # Update state
             return {
                 **state,
@@ -112,7 +148,7 @@ class EducationalNodes:
                 'next_agent': 'content_creator'
             }
     
-    async def content_creator_node(self, state: TutoringState) -> TutoringState:
+    def content_creator_node(self, state: TutoringState) -> TutoringState:
         """
         Content Creator Agent - Generates personalized educational content
         
@@ -121,6 +157,7 @@ class EducationalNodes:
         automatic caching via decorators.
         """
         logger.info(f"Content Creator generating lesson for: {state['learning_request']}")
+        start_time = time.time()
         
         try:
             topic = state['learning_request']
@@ -129,12 +166,24 @@ class EducationalNodes:
             student_profile = StudentProfile.from_dict(state['student_profile'])
             
             # Generate content (will be cached automatically by decorator)
-            lesson_data = await self._generate_lesson_content(
+            lesson_data = self._generate_lesson_content_sync(
                 topic, subject, level, student_profile.learning_style
             )
             
             logger.info(f"Created lesson plan with {len(lesson_data['lesson_plan']['objectives'])} objectives")
             
+            # Track interaction
+            response_time = int((time.time() - start_time) * 1000)
+            if self.analytics_manager:
+                try:
+                    self.analytics_manager.record_interaction(
+                        session_id=state['session_id'],
+                        interaction_type='content_generation',
+                        agent_name='content_creator',
+                        response_time_ms=response_time
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to track interaction: {e}")
             # Update state
             return {
                 **state,
@@ -154,10 +203,10 @@ class EducationalNodes:
                 'next_agent': 'content_retriever'
             }
     
-    @cache_lesson(ttl=3600)
-    async def _generate_lesson_content(self, topic: str, subject: str, level: str, learning_style: str) -> Dict:
+    def _generate_lesson_content_sync(self, topic: str, subject: str, level: str, learning_style: str) -> Dict:
         """
         Internal method to generate lesson content with caching
+        Note: Synchronous version for LangGraph compatibility
         """
         # Generate lesson plan (Phase 1 - still useful for structure)
         lesson_plan = self.tutor.create_lesson_plan(
@@ -218,7 +267,7 @@ class EducationalNodes:
             'explanations': explanation
         }
     
-    async def content_retriever_node(self, state: TutoringState) -> TutoringState:
+    def content_retriever_node(self, state: TutoringState) -> TutoringState:
         """
         Content Retriever Agent - Finds relevant educational resources
         
@@ -227,6 +276,7 @@ class EducationalNodes:
         automatic caching via decorators.
         """
         logger.info(f"Content Retriever searching for: {state['learning_request']}")
+        start_time = time.time()
         
         try:
             topic = state['learning_request']
@@ -234,12 +284,24 @@ class EducationalNodes:
             level = state['detected_level']
             
             # Retrieve content (will be cached automatically by decorator)
-            educational_content = await self._retrieve_educational_content(
+            educational_content = self._retrieve_educational_content_sync(
                 topic, subject, level
             )
             
             logger.info(f"Retrieved {len(educational_content)} educational resources")
             
+            # Track interaction
+            response_time = int((time.time() - start_time) * 1000)
+            if self.analytics_manager:
+                try:
+                    self.analytics_manager.record_interaction(
+                        session_id=state['session_id'],
+                        interaction_type='content_retrieval',
+                        agent_name='content_retriever',
+                        response_time_ms=response_time
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to track interaction: {e}")
             # Update state
             return {
                 **state,
@@ -259,10 +321,10 @@ class EducationalNodes:
                 'next_agent': 'practice_generator'
             }
     
-    @cache_rag_search(ttl=1800)
-    async def _retrieve_educational_content(self, query: str, subject: str, level: str) -> List[Dict]:
+    def _retrieve_educational_content_sync(self, query: str, subject: str, level: str) -> List[Dict]:
         """
         Internal method to retrieve educational content with caching
+        Note: Synchronous version for LangGraph compatibility
         """
         # Phase 2: Use Advanced RAG if available
         if self.rag_system and self.rag_system.initialized:
@@ -314,7 +376,7 @@ class EducationalNodes:
         
         return educational_content
     
-    async def practice_generator_node(self, state: TutoringState) -> TutoringState:
+    def practice_generator_node(self, state: TutoringState) -> TutoringState:
         """
         Practice Generator Agent - Creates practice problems and exercises
         
@@ -322,7 +384,8 @@ class EducationalNodes:
         Phase 2: Uses LLM for more varied and appropriate problems
         automatic caching via decorators.
         """
-        logger.info(f"📝 Practice Generator creating exercises for: {state['learning_request']}")
+        logger.info(f"Practice Generator creating exercises for: {state['learning_request']}")
+        start_time = time.time()
         
         try:
             topic = state['learning_request']
@@ -330,12 +393,40 @@ class EducationalNodes:
             level = state['detected_level']
             
             # Generate problems (will be cached automatically by decorator)
-            practice_problems = await self._generate_practice_problems(
+            practice_problems = self._generate_practice_problems_sync(
                 topic, subject, level, 5
             )
             
             logger.info(f"Created {len(practice_problems)} practice problems")
             
+            # Track interaction
+            response_time = int((time.time() - start_time) * 1000)
+            if self.analytics_manager:
+                try:
+                    self.analytics_manager.record_interaction(
+                        session_id=state['session_id'],
+                        interaction_type='practice_generation',
+                        agent_name='practice_generator',
+                        response_time_ms=response_time
+                    )
+                    
+                    # Also track that practice problems were generated
+                    # This helps with analytics on practice problem usage
+                    for i, problem in enumerate(practice_problems, 1):
+                        self.analytics_manager.record_practice_attempt(
+                            session_id=state['session_id'],
+                            student_id=state['student_profile'].get('name', 'unknown'),
+                            problem_number=i,
+                            problem_text=problem.get('question', ''),
+                            topic=topic,
+                            difficulty=problem.get('difficulty', 'medium'),
+                            student_answer='pending',  # Not yet attempted
+                            correct=False,  # Not yet attempted
+                            time_spent=0,  # Not yet attempted
+                            hints_used=0
+                        )
+                except Exception as e:
+                    logger.debug(f"Failed to track interaction: {e}")
             # Update state
             return {
                 **state,
@@ -355,11 +446,11 @@ class EducationalNodes:
                 'next_agent': 'assessment_agent'
             }
     
-    @cache_practice(ttl=1800)
-    async def _generate_practice_problems(self, topic: str, subject: str, level: str, count: int) -> List[Dict]:
+    def _generate_practice_problems_sync(self, topic: str, subject: str, level: str, count: int) -> List[Dict]:
         """
         Internal method to generate practice problems with caching
         Note: The decorator expects (topic, level, count) signature
+        Note: Synchronous version for LangGraph compatibility
         """
         # Phase 2: Use LLM if available for better practice problems
         if self.llm_manager:
@@ -400,7 +491,6 @@ class EducationalNodes:
         
         return practice_problems
     
-    @cache_agent_response(ttl=1800)
     def assessment_agent_node(self, state: TutoringState) -> TutoringState:
         """
         Assessment Agent - Prepares assessment strategy
@@ -408,6 +498,7 @@ class EducationalNodes:
         Creates assessment plan for measuring student understanding
         """
         logger.info(f"Assessment Agent preparing evaluation for: {state['learning_request']}")
+        start_time = time.time()
         
         try:
             topic = state['learning_request']
@@ -431,6 +522,18 @@ class EducationalNodes:
             
             logger.info(f"Assessment plan ready with {len(assessment_plan['evaluation_criteria'])} criteria")
             
+            # Track interaction
+            response_time = int((time.time() - start_time) * 1000)
+            if self.analytics_manager:
+                try:
+                    self.analytics_manager.record_interaction(
+                        session_id=state['session_id'],
+                        interaction_type='assessment_creation',
+                        agent_name='assessment_agent',
+                        response_time_ms=response_time
+                    )
+                except Exception as e:
+                    logger.debug(f"Failed to track interaction: {e}")
             # Update state
             return {
                 **state,
@@ -449,7 +552,6 @@ class EducationalNodes:
                 'next_agent': 'progress_tracker'
             }
     
-    @cache_agent_response(ttl=600)
     def progress_tracker_node(self, state: TutoringState) -> TutoringState:
         """
         Progress Tracker Agent - Tracks and reports learning progress
@@ -457,6 +559,7 @@ class EducationalNodes:
         Final agent that compiles all learning data and prepares session summary
         """
         logger.info(f"Progress Tracker compiling session for: {state['learning_request']}")
+        start_time = time.time()
         
         try:
             # Compile learning progress
@@ -493,6 +596,35 @@ class EducationalNodes:
             
             logger.info(f"Session completed successfully - {len(state.get('agent_history', []))} agents involved")
             
+            # Track final interaction
+            response_time = int((time.time() - start_time) * 1000)
+            if self.analytics_manager:
+                try:
+                    self.analytics_manager.record_interaction(
+                        session_id=state['session_id'],
+                        interaction_type='progress_tracking',
+                        agent_name='progress_tracker',
+                        response_time_ms=response_time
+                    )
+                    
+                    # Calculate engagement and completion metrics
+                    engagement_score = self._calculate_engagement_score(state)
+                    completion_rate = self._calculate_completion_rate(state)
+                    
+                    # End the analytics session
+                    self.analytics_manager.record_session_end(
+                        session_id=state['session_id'],
+                        engagement_score=engagement_score,
+                        completion_rate=completion_rate
+                    )
+                    
+                    # Compute daily metrics for the student
+                    student_id = state['student_profile'].get('name', 'unknown')
+                    self.analytics_manager.compute_daily_metrics(student_id)
+                    
+                    logger.debug("Analytics session ended and metrics computed")
+                except Exception as e:
+                    logger.debug(f"Failed to end analytics session: {e}")
             # Update state
             return {
                 **state,
@@ -563,13 +695,46 @@ class EducationalNodes:
             recommendations.append("Excellent session - all educational content generated successfully")
         
         return recommendations
+    
+    def _calculate_engagement_score(self, state: TutoringState) -> float:
+        """Calculate engagement score based on session completeness"""
+        score = 0.0
+        
+        # Check if key components were created
+        if state.get('lesson_plan'):
+            score += 0.2
+        if state.get('explanations'):
+            score += 0.2
+        if state.get('educational_content'):
+            score += 0.2
+        if state.get('practice_problems'):
+            score += 0.2
+        if state.get('assessments'):
+            score += 0.1
+        
+        # Bonus for no errors
+        if not state.get('errors'):
+            score += 0.1
+        
+        return min(1.0, score)
+    
+    def _calculate_completion_rate(self, state: TutoringState) -> float:
+        """Calculate completion rate based on agent participation"""
+        expected_agents = ['subject_expert', 'content_creator', 'content_retriever', 
+                         'practice_generator', 'assessment_agent', 'progress_tracker']
+        
+        agent_history = state.get('agent_history', [])
+        completed = sum(1 for agent in expected_agents if agent in agent_history)
+        
+        return completed / len(expected_agents) if expected_agents else 0.0
 
 
 def create_educational_nodes(
     tutor: UniversalAITutor,
     llm_manager=None,
     specialized_agents=None,
-    rag_system=None
+    rag_system=None,
+    analytics_manager=None
 ) -> EducationalNodes:
     """
     Factory function to create educational nodes
@@ -579,13 +744,15 @@ def create_educational_nodes(
         llm_manager: EducationalLLMManager for Phase 2 (optional)
         specialized_agents: Dict of specialized agents for Phase 2 (optional)
         rag_system: EducationalRAG for Phase 2 (optional)
+        analytics_manager: AnalyticsManager for Phase 3 (optional)
         
     Returns:
-        EducationalNodes instance with Phase 2 enhancements if provided
+        EducationalNodes instance with Phase 2 & 3 enhancements if provided
     """
     return EducationalNodes(
         tutor=tutor,
         llm_manager=llm_manager,
         specialized_agents=specialized_agents,
-        rag_system=rag_system
+        rag_system=rag_system,
+        analytics_manager=analytics_manager
     )

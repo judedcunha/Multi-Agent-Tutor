@@ -2,8 +2,10 @@
 import os
 import logging
 from typing import Dict, Any, Optional, List
+from datetime import datetime
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, WebSocket, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import uvicorn
@@ -19,8 +21,9 @@ from agents.state_schema import StudentProfile
 from api.educational_streaming import streaming_manager
 from api.websocket_routes import websocket_endpoint, websocket_admin
 from database.db_manager import db_manager, get_db
-from database.educational_crud import educational_crud
+from database.educational_crud import educational_crud, analytics_crud
 from optimization.educational_caching import cache_manager
+from monitoring.educational_analytics import analytics_manager
 
 # Load environment variables
 load_dotenv()
@@ -65,6 +68,10 @@ async def lifespan(app: FastAPI):
         await streaming_manager.initialize(advanced_system)
         logger.info("WebSocket streaming initialized")
         
+        # Phase 3: Initialize analytics manager
+        analytics_manager.initialize()
+        logger.info("Analytics system initialized")
+        
     except Exception as e:
         logger.error(f"Failed to initialize systems: {str(e)}")
         # Don't raise - allow app to start in degraded mode
@@ -83,6 +90,15 @@ app = FastAPI(
     description="Advanced multi-agent educational tutoring platform with LangGraph orchestration and real-time streaming",
     version="3.0",
     lifespan=lifespan
+)
+
+# Add CORS middleware to allow frontend access
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Request/Response models
@@ -703,6 +719,313 @@ async def get_streaming_status():
         "sessions": active_sessions,
         "status": "operational"
     }
+
+
+# Phase 3: Analytics Endpoints
+
+class AnalyticsRequest(BaseModel):
+    """Request model for analytics operations"""
+    student_id: str
+    session_id: Optional[str] = None
+    topic: Optional[str] = None
+    time_range: str = "week"  # day, week, month
+
+class PracticeAttemptRequest(BaseModel):
+    """Request model for recording practice attempts"""
+    session_id: str
+    student_id: str
+    problem_number: int
+    problem_text: str
+    topic: str
+    difficulty: str = "medium"
+    student_answer: str
+    correct: bool
+    time_spent: int  # seconds
+    hints_used: int = 0
+
+class InteractionRequest(BaseModel):
+    """Request model for recording interactions"""
+    session_id: str
+    interaction_type: str  # question, hint_request, submission
+    agent_name: str
+    response_time_ms: int
+
+
+@app.get("/analytics/student/{student_id}")
+def get_student_analytics(
+    student_id: str,
+    time_range: str = "week",
+    db: Session = Depends(get_db)
+):
+    """Get comprehensive analytics for a student"""
+    try:
+        # Get analytics from manager
+        analytics = analytics_manager.get_student_analytics(
+            student_id=student_id,
+            time_range=time_range
+        )
+        
+        # Get additional data from CRUD if needed
+        summary = analytics_crud.get_student_analytics_summary(db, student_id)
+        
+        return {
+            "status": "success",
+            "student_id": student_id,
+            "time_range": time_range,
+            "analytics": analytics,
+            "summary": summary
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching student analytics: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve analytics: {str(e)}"
+        )
+
+
+@app.get("/analytics/topic/{student_id}/{topic}")
+def get_topic_performance(
+    student_id: str,
+    topic: str,
+    db: Session = Depends(get_db)
+):
+    """Get detailed performance analytics for a specific topic"""
+    try:
+        # Get from analytics manager
+        performance = analytics_manager.get_topic_performance(
+            student_id=student_id,
+            topic=topic
+        )
+        
+        # Get trends from CRUD
+        trends = analytics_crud.get_topic_trends(db, student_id, topic)
+        
+        return {
+            "status": "success",
+            "student_id": student_id,
+            "topic": topic,
+            "performance": performance,
+            "trends": trends
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching topic performance: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve topic performance: {str(e)}"
+        )
+
+
+@app.get("/analytics/dashboard/{student_id}")
+def get_dashboard_data(
+    student_id: str,
+    time_range: str = "week",
+    db: Session = Depends(get_db)
+):
+    """Get all dashboard data for a student"""
+    try:
+        # Main analytics
+        analytics = analytics_manager.get_student_analytics(
+            student_id=student_id,
+            time_range=time_range
+        )
+        
+        # Learning streaks
+        streaks = analytics_manager.get_learning_streaks(student_id)
+        
+        # Learning streak from CRUD
+        streak_data = analytics_crud.calculate_learning_streak(db, student_id)
+        
+        # Get student info
+        student = educational_crud.get_student(db, student_id)
+        
+        return {
+            "status": "success",
+            "student": {
+                "id": student.student_id if student else student_id,
+                "name": student.name if student else "Unknown",
+                "level": student.level if student else "beginner",
+                "learning_style": student.learning_style if student else "mixed"
+            },
+            "analytics": analytics,
+            "streaks": {
+                **streaks,
+                **streak_data
+            },
+            "time_range": time_range,
+            "last_updated": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching dashboard data: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve dashboard data: {str(e)}"
+        )
+
+
+@app.post("/analytics/session/start")
+def start_analytics_session(
+    session_id: str,
+    student_id: str,
+    topic: str,
+    subject: str,
+    level: str = "beginner"
+):
+    """Start tracking a learning session"""
+    try:
+        result = analytics_manager.record_session_start(
+            session_id=session_id,
+            student_id=student_id,
+            topic=topic,
+            subject=subject,
+            level=level
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error starting analytics session: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to start analytics session: {str(e)}"
+        )
+
+
+@app.post("/analytics/session/end")
+def end_analytics_session(
+    session_id: str,
+    engagement_score: Optional[float] = None,
+    completion_rate: Optional[float] = None
+):
+    """End a learning session and compute final metrics"""
+    try:
+        result = analytics_manager.record_session_end(
+            session_id=session_id,
+            engagement_score=engagement_score,
+            completion_rate=completion_rate
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error ending analytics session: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to end analytics session: {str(e)}"
+        )
+
+
+@app.post("/analytics/practice/attempt")
+def record_practice_attempt(request: PracticeAttemptRequest):
+    """Record a practice problem attempt"""
+    try:
+        result = analytics_manager.record_practice_attempt(
+            session_id=request.session_id,
+            student_id=request.student_id,
+            problem_number=request.problem_number,
+            problem_text=request.problem_text,
+            topic=request.topic,
+            difficulty=request.difficulty,
+            student_answer=request.student_answer,
+            correct=request.correct,
+            time_spent=request.time_spent,
+            hints_used=request.hints_used
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error recording practice attempt: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to record practice attempt: {str(e)}"
+        )
+
+
+@app.post("/analytics/interaction")
+def record_interaction(request: InteractionRequest):
+    """Record an interaction during a learning session"""
+    try:
+        analytics_manager.record_interaction(
+            session_id=request.session_id,
+            interaction_type=request.interaction_type,
+            agent_name=request.agent_name,
+            response_time_ms=request.response_time_ms
+        )
+        
+        return {
+            "status": "success",
+            "message": "Interaction recorded"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error recording interaction: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to record interaction: {str(e)}"
+        )
+
+
+@app.post("/analytics/metrics/compute")
+def compute_daily_metrics(
+    student_id: str,
+    date: Optional[str] = None  # ISO format date
+):
+    """Compute and store daily metrics for a student"""
+    try:
+        target_date = datetime.fromisoformat(date) if date else datetime.utcnow()
+        
+        analytics_manager.compute_daily_metrics(
+            student_id=student_id,
+            date=target_date
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Daily metrics computed for {student_id}",
+            "date": target_date.date().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error computing daily metrics: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to compute daily metrics: {str(e)}"
+        )
+
+
+@app.get("/analytics/streaks/{student_id}")
+def get_learning_streaks(
+    student_id: str,
+    db: Session = Depends(get_db)
+):
+    """Get learning streak information for a student"""
+    try:
+        # Get from analytics manager
+        streaks = analytics_manager.get_learning_streaks(student_id)
+        
+        # Also get from CRUD for comparison
+        crud_streaks = analytics_crud.calculate_learning_streak(db, student_id)
+        
+        return {
+            "status": "success",
+            "student_id": student_id,
+            "current_streak": max(streaks.get('current_streak', 0), 
+                                 crud_streaks.get('current_streak', 0)),
+            "longest_streak": max(streaks.get('longest_streak', 0),
+                                 crud_streaks.get('longest_streak', 0)),
+            "total_active_days": streaks.get('total_active_days', 0),
+            "last_active": streaks.get('last_active')
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching learning streaks: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve learning streaks: {str(e)}"
+        )
 
 
 # Phase 3: Cache Management Endpoints

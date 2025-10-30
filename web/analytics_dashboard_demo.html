@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analytics Dashboard - Multi-Agent Tutor</title>
+    
+    <!-- Styling -->
+    <link rel="stylesheet" href="AnalyticsDashboard.css">
+    
+    <style>
+        .demo-banner {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 20px;
+            text-align: center;
+            font-size: 14px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .chart-canvas-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <!-- Demo Banner -->
+    <div class="demo-banner">
+        📊 <strong>Analytics Dashboard Demo</strong> - Real-time learning analytics with multi-agent insights
+    </div>
+    
+    <!-- React Root -->
+    <div id="root"></div>
+
+    <!-- React 18 -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Chart.js - Works perfectly in browser -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    
+    <!-- Babel Standalone -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Analytics Dashboard Component -->
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useRef } = React;
+
+        const AnalyticsDashboard = ({ serverUrl = 'http://localhost:8000' }) => {
+          const [studentId, setStudentId] = useState('demo_student_001');
+          const [timeRange, setTimeRange] = useState('week');
+          const [loading, setLoading] = useState(false);
+          const [lastUpdated, setLastUpdated] = useState(null);
+          const [error, setError] = useState(null);
+          const [dashboardData, setDashboardData] = useState(null);
+          const [analytics, setAnalytics] = useState(null);
+          const [streaks, setStreaks] = useState(null);
+          const [student, setStudent] = useState(null);
+          
+          // Chart refs
+          const progressChartRef = useRef(null);
+          const topicChartRef = useRef(null);
+          const practiceChartRef = useRef(null);
+          const progressChartInstance = useRef(null);
+          const topicChartInstance = useRef(null);
+          const practiceChartInstance = useRef(null);
+
+          const fetchDashboardData = useCallback(async () => {
+            setLoading(true);
+            setError(null);
+            
+            try {
+              const response = await fetch(`${serverUrl}/analytics/dashboard/${studentId}?time_range=${timeRange}`);
+              if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+              const data = await response.json();
+              if (data.status === 'success') {
+                setDashboardData(data);
+                setAnalytics(data.analytics);
+                setStreaks(data.streaks);
+                setStudent(data.student);
+                setLastUpdated(new Date());
+              } else {
+                throw new Error('Failed to fetch dashboard data');
+              }
+            } catch (err) {
+              console.error('Error:', err);
+              setError(err.message);
+              setMockData();
+            } finally {
+              setLoading(false);
+            }
+          }, [studentId, timeRange, serverUrl]);
+
+          const setMockData = () => {
+            const generateProgressData = () => {
+              const data = [];
+              const now = new Date();
+              for (let i = 13; i >= 0; i--) {
+                const date = new Date(now);
+                date.setDate(date.getDate() - i);
+                const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                const sessions = Math.max(0, Math.floor(Math.random() * 3) + (i % 7 === 0 || i % 7 === 6 ? 0 : 1));
+                const timeSpent = sessions > 0 ? Math.floor(Math.random() * 60) + 20 : 0;
+                data.push({ date: dateStr, sessions, timeSpent });
+              }
+              return data;
+            };
+            
+            const generateTopicData = () => {
+              return [
+                { name: 'Python Basics', score: 92 },
+                { name: 'Web Development', score: 88 },
+                { name: 'Data Structures', score: 85 },
+                { name: 'Algorithms', score: 78 },
+                { name: 'Machine Learning', score: 72 }
+              ];
+            };
+            
+            const generateCalendarData = () => {
+              const data = [];
+              const now = new Date();
+              for (let i = 59; i >= 0; i--) {
+                const date = new Date(now);
+                date.setDate(date.getDate() - i);
+                const dayOfWeek = date.getDay();
+                const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+                let sessions = 0;
+                const random = Math.random();
+                if (!isWeekend && random > 0.2) sessions = Math.floor(Math.random() * 3) + 1;
+                else if (isWeekend && random > 0.5) sessions = Math.floor(Math.random() * 2);
+                data.push({
+                  date: date.toISOString().split('T')[0],
+                  displayDate: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                  sessions,
+                  day: date.getDate(),
+                  dayOfWeek: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dayOfWeek]
+                });
+              }
+              return data;
+            };
+            
+            const mockAnalytics = {
+              total_sessions: 24,
+              total_practice_problems: 72,
+              average_score: 0.875,
+              total_time_minutes: 640,
+              topics_studied: 12,
+              active_days: 18,
+              progress_data: generateProgressData(),
+              topic_data: generateTopicData(),
+              calendar_data: generateCalendarData()
+            };
+            
+            setDashboardData({
+              student: { id: studentId, name: 'Demo Student', level: 'intermediate', learning_style: 'visual' },
+              analytics: mockAnalytics,
+              streaks: { current_streak: 7, longest_streak: 14, total_active_days: 18 }
+            });
+            setAnalytics(mockAnalytics);
+            setStreaks({ current_streak: 7, longest_streak: 14, total_active_days: 18 });
+            setStudent({ id: studentId, name: 'Demo Student', level: 'intermediate', learning_style: 'visual' });
+            setLastUpdated(new Date());
+          };
+
+          useEffect(() => {
+            fetchDashboardData();
+          }, [fetchDashboardData]);
+
+          useEffect(() => {
+            const interval = setInterval(fetchDashboardData, 5 * 60 * 1000);
+            return () => clearInterval(interval);
+          }, [fetchDashboardData]);
+
+          // Create/Update Charts with Chart.js
+          useEffect(() => {
+            if (!analytics) return;
+            
+            // Progress Chart
+            if (progressChartRef.current && analytics.progress_data) {
+              if (progressChartInstance.current) {
+                progressChartInstance.current.destroy();
+              }
+              
+              const ctx = progressChartRef.current.getContext('2d');
+              progressChartInstance.current = new Chart(ctx, {
+                type: 'line',
+                data: {
+                  labels: analytics.progress_data.map(d => d.date),
+                  datasets: [
+                    {
+                      label: 'Sessions',
+                      data: analytics.progress_data.map(d => d.sessions),
+                      borderColor: '#667eea',
+                      backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                      borderWidth: 3,
+                      tension: 0.4,
+                      fill: true
+                    },
+                    {
+                      label: 'Time (min)',
+                      data: analytics.progress_data.map(d => d.timeSpent),
+                      borderColor: '#764ba2',
+                      backgroundColor: 'rgba(118, 75, 162, 0.1)',
+                      borderWidth: 2,
+                      borderDash: [5, 5],
+                      tension: 0.4
+                    }
+                  ]
+                },
+                options: {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                    legend: { display: true, position: 'bottom' },
+                    tooltip: { mode: 'index', intersect: false }
+                  },
+                  scales: {
+                    y: { beginAtZero: true, grid: { color: '#e0e0e0' } },
+                    x: { grid: { display: false } }
+                  }
+                }
+              });
+            }
+            
+            // Topic Performance Chart
+            if (topicChartRef.current && analytics.topic_data) {
+              if (topicChartInstance.current) {
+                topicChartInstance.current.destroy();
+              }
+              
+              const ctx = topicChartRef.current.getContext('2d');
+              topicChartInstance.current = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                  labels: analytics.topic_data.map(d => d.name),
+                  datasets: [{
+                    label: 'Score (%)',
+                    data: analytics.topic_data.map(d => d.score),
+                    backgroundColor: analytics.topic_data.map(d => 
+                      d.score >= 90 ? '#10b981' : d.score >= 80 ? '#667eea' : d.score >= 70 ? '#f59e0b' : '#ef4444'
+                    ),
+                    borderRadius: 8,
+                    barThickness: 30
+                  }]
+                },
+                options: {
+                  indexAxis: 'y',
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: (context) => `Score: ${context.parsed.x}%` } }
+                  },
+                  scales: {
+                    x: { beginAtZero: true, max: 100, grid: { color: '#e0e0e0' } },
+                    y: { grid: { display: false } }
+                  }
+                }
+              });
+            }
+            
+            // Practice Success Chart
+            if (practiceChartRef.current && analytics.average_score) {
+              if (practiceChartInstance.current) {
+                practiceChartInstance.current.destroy();
+              }
+              
+              const ctx = practiceChartRef.current.getContext('2d');
+              practiceChartInstance.current = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                  labels: ['Correct', 'Incorrect', 'Incomplete'],
+                  datasets: [{
+                    data: [63, 7, 2],
+                    backgroundColor: ['#10b981', '#ef4444', '#f59e0b'],
+                    borderWidth: 2,
+                    borderColor: '#fff'
+                  }]
+                },
+                options: {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                    legend: { position: 'bottom' },
+                    tooltip: {
+                      callbacks: {
+                        label: (context) => {
+                          const label = context.label || '';
+                          const value = context.parsed || 0;
+                          const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                          const percentage = ((value / total) * 100).toFixed(1);
+                          return `${label}: ${value} (${percentage}%)`;
+                        }
+                      }
+                    }
+                  },
+                  cutout: '60%'
+                },
+                plugins: [{
+                  id: 'centerText',
+                  beforeDraw: (chart) => {
+                    const { ctx, chartArea: { width, height } } = chart;
+                    ctx.save();
+                    const text = `${Math.round((analytics?.average_score || 0) * 100)}%`;
+                    ctx.font = 'bold 36px Arial';
+                    ctx.fillStyle = '#111827';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(text, width / 2, height / 2 - 10);
+                    ctx.font = '13px Arial';
+                    ctx.fillStyle = '#6b7280';
+                    ctx.fillText('Success Rate', width / 2, height / 2 + 20);
+                    ctx.restore();
+                  }
+                }]
+              });
+            }
+            
+            return () => {
+              if (progressChartInstance.current) progressChartInstance.current.destroy();
+              if (topicChartInstance.current) topicChartInstance.current.destroy();
+              if (practiceChartInstance.current) practiceChartInstance.current.destroy();
+            };
+          }, [analytics]);
+
+          const handleRefresh = () => fetchDashboardData();
+          const handleStudentIdChange = (e) => setStudentId(e.target.value);
+          const handleTimeRangeChange = (range) => setTimeRange(range);
+
+          return (
+            <div className="analytics-dashboard">
+              <div className="dashboard-header">
+                <div className="header-content">
+                  <div className="header-title">
+                    <h1>📊 Learning Analytics Dashboard</h1>
+                    <p className="header-subtitle">Track your progress and achievements</p>
+                  </div>
+                  <div className="header-status">
+                    <div className={`connection-indicator ${error ? 'error' : 'connected'}`}>
+                      <span className="status-dot"></span>
+                      {error ? 'Demo Mode' : 'Connected'}
+                    </div>
+                    {lastUpdated && <div className="last-updated">Updated: {lastUpdated.toLocaleTimeString()}</div>}
+                  </div>
+                </div>
+              </div>
+
+              <div className="control-panel">
+                <div className="student-selector">
+                  <label htmlFor="studentId">Student ID:</label>
+                  <input type="text" id="studentId" value={studentId} onChange={handleStudentIdChange} placeholder="Enter student ID..." disabled={loading} />
+                  {student && (
+                    <div className="student-info">
+                      <span className="student-name">{student.name}</span>
+                      <span className="student-level">{student.level}</span>
+                      <span className="student-style">{student.learning_style}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="time-range-selector">
+                  <label>Time Range:</label>
+                  <div className="time-range-buttons">
+                    <button className={timeRange === 'day' ? 'active' : ''} onClick={() => handleTimeRangeChange('day')} disabled={loading}>Day</button>
+                    <button className={timeRange === 'week' ? 'active' : ''} onClick={() => handleTimeRangeChange('week')} disabled={loading}>Week</button>
+                    <button className={timeRange === 'month' ? 'active' : ''} onClick={() => handleTimeRangeChange('month')} disabled={loading}>Month</button>
+                    <button className={timeRange === 'all' ? 'active' : ''} onClick={() => handleTimeRangeChange('all')} disabled={loading}>All Time</button>
+                  </div>
+                </div>
+
+                <button className="refresh-button" onClick={handleRefresh} disabled={loading}>
+                  {loading ? <><span className="spinner"></span> Refreshing...</> : <>🔄 Refresh</>}
+                </button>
+              </div>
+
+              {error && (
+                <div className="error-banner">
+                  <span className="error-icon">⚠️</span>
+                  <span className="error-text">Could not connect to analytics server. Showing demo data.</span>
+                </div>
+              )}
+
+              {loading && (
+                <div className="loading-overlay">
+                  <div className="loading-spinner"></div>
+                  <p>Loading analytics data...</p>
+                </div>
+              )}
+
+              {dashboardData && !loading && (
+                <div className="dashboard-content">
+                  {/* Stats Cards */}
+                  <div className="stats-grid">
+                    <div className="stat-card">
+                      <div className="stat-icon">📚</div>
+                      <div className="stat-content">
+                        <div className="stat-label">Total Sessions</div>
+                        <div className="stat-value">{analytics?.total_sessions || 0}</div>
+                        <div className="stat-subtitle">Learning sessions completed</div>
+                      </div>
+                    </div>
+
+                    <div className="stat-card">
+                      <div className="stat-icon">🎯</div>
+                      <div className="stat-content">
+                        <div className="stat-label">Average Score</div>
+                        <div className="stat-value">{analytics?.average_score ? `${Math.round(analytics.average_score * 100)}%` : '0%'}</div>
+                        <div className="stat-subtitle">Practice problem success rate</div>
+                      </div>
+                    </div>
+
+                    <div className="stat-card streak-card">
+                      <div className="stat-icon">🔥</div>
+                      <div className="stat-content">
+                        <div className="stat-label">Current Streak</div>
+                        <div className="stat-value">{streaks?.current_streak || 0} days</div>
+                        <div className="stat-subtitle">Longest: {streaks?.longest_streak || 0} days</div>
+                      </div>
+                    </div>
+
+                    <div className="stat-card">
+                      <div className="stat-icon">⏱️</div>
+                      <div className="stat-content">
+                        <div className="stat-label">Time Spent</div>
+                        <div className="stat-value">
+                          {analytics?.total_time_minutes ? `${Math.floor(analytics.total_time_minutes / 60)}h ${analytics.total_time_minutes % 60}m` : '0h 0m'}
+                        </div>
+                        <div className="stat-subtitle">Total learning time</div>
+                      </div>
+                    </div>
+
+                    <div className="stat-card">
+                      <div className="stat-icon">📖</div>
+                      <div className="stat-content">
+                        <div className="stat-label">Topics Studied</div>
+                        <div className="stat-value">{analytics?.topics_studied || 0}</div>
+                        <div className="stat-subtitle">Different subjects explored</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Progress Chart */}
+                  {analytics?.progress_data && (
+                    <div className="chart-container">
+                      <div className="chart-header">
+                        <h2>📈 Learning Progress Over Time</h2>
+                        <p className="chart-subtitle">Your activity and performance trends</p>
+                      </div>
+                      <div className="chart-canvas-container">
+                        <canvas ref={progressChartRef}></canvas>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Topic Performance Chart */}
+                  {analytics?.topic_data && (
+                    <div className="chart-container">
+                      <div className="chart-header">
+                        <h2>🎯 Topic Performance</h2>
+                        <p className="chart-subtitle">Your mastery level across different subjects</p>
+                      </div>
+                      <div className="chart-canvas-container">
+                        <canvas ref={topicChartRef}></canvas>
+                      </div>
+                      <div className="chart-legend-details">
+                        <div className="legend-item"><span className="legend-dot" style={{ backgroundColor: '#10b981' }}></span><span>Excellent (90-100%)</span></div>
+                        <div className="legend-item"><span className="legend-dot" style={{ backgroundColor: '#667eea' }}></span><span>Good (80-89%)</span></div>
+                        <div className="legend-item"><span className="legend-dot" style={{ backgroundColor: '#f59e0b' }}></span><span>Needs Practice (70-79%)</span></div>
+                        <div className="legend-item"><span className="legend-dot" style={{ backgroundColor: '#ef4444' }}></span><span>Needs Work (&lt;70%)</span></div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Practice Success Chart */}
+                  {analytics?.average_score && (
+                    <div className="chart-container">
+                      <div className="chart-header">
+                        <h2>🎯 Practice Success Rate</h2>
+                        <p className="chart-subtitle">Your performance on practice problems</p>
+                      </div>
+                      <div className="chart-canvas-container">
+                        <canvas ref={practiceChartRef}></canvas>
+                      </div>
+                      <div className="chart-stats">
+                        <div className="stat-item"><span className="stat-icon" style={{ color: '#10b981' }}>✔</span><span className="stat-text">63 Correct</span></div>
+                        <div className="stat-item"><span className="stat-icon" style={{ color: '#ef4444' }}>✘</span><span className="stat-text">7 Incorrect</span></div>
+                        <div className="stat-item"><span className="stat-icon" style={{ color: '#f59e0b' }}>⌛</span><span className="stat-text">2 Incomplete</span></div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Learning Streak Calendar */}
+                  {analytics?.calendar_data && (
+                    <div className="chart-container">
+                      <div className="chart-header">
+                        <h2>🔥 Learning Streak Calendar</h2>
+                        <p className="chart-subtitle">Your daily learning activity over the past 60 days</p>
+                      </div>
+                      <div className="calendar-wrapper">
+                        <div className="calendar-info">
+                          <div className="streak-info">
+                            <div className="streak-stat">
+                              <span className="streak-number">{streaks?.current_streak || 0}</span>
+                              <span className="streak-label">Current Streak</span>
+                            </div>
+                            <div className="streak-stat">
+                              <span className="streak-number">{streaks?.longest_streak || 0}</span>
+                              <span className="streak-label">Longest Streak</span>
+                            </div>
+                            <div className="streak-stat">
+                              <span className="streak-number">{analytics?.active_days || 0}</span>
+                              <span className="streak-label">Active Days</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="calendar-grid">
+                          {analytics.calendar_data.map((day, index) => {
+                            const colorClass = day.sessions >= 3 ? 'activity-high' : day.sessions === 2 ? 'activity-medium' : day.sessions === 1 ? 'activity-low' : 'activity-none';
+                            return (
+                              <div key={index} className={`calendar-day ${colorClass}`} title={`${day.displayDate}: ${day.sessions} session${day.sessions !== 1 ? 's' : ''}`}>
+                                <span className="day-number">{day.day === 1 ? day.displayDate.split(' ')[0].substring(0, 3) : ''}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="calendar-legend">
+                          <span className="legend-label">Less</span>
+                          <div className="legend-square activity-none"></div>
+                          <div className="legend-square activity-low"></div>
+                          <div className="legend-square activity-medium"></div>
+                          <div className="legend-square activity-high"></div>
+                          <span className="legend-label">More</span>
+                        </div>
+                      </div>
+                      <div className="calendar-insights">
+                        <div className="insight-item">
+                          <span className="insight-icon">🏆</span>
+                          <span className="insight-text">You're on a <strong>{streaks?.current_streak || 0}-day streak</strong>! Keep it going!</span>
+                        </div>
+                        {streaks?.current_streak >= 7 && (
+                          <div className="insight-item">
+                            <span className="insight-icon">🔥</span>
+                            <span className="insight-text">Amazing! You've maintained consistency for over a week.</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        };
+
+        // Mount component
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<AnalyticsDashboard />);
+    </script>
+</body>
+</html>
