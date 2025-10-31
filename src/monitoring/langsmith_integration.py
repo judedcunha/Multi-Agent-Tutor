@@ -7,6 +7,7 @@ import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from functools import wraps
+import uuid
 
 from langsmith import Client
 from langsmith.run_helpers import traceable
@@ -39,6 +40,7 @@ class LangSmithMonitor:
         self.tracer: Optional[LangChainTracer] = None
         self.project_name = "multi-agent-tutor"
         self.enabled = False
+        self.run_id_map = {}  # Track our own run IDs for v0.4.x compatibility
         
     def initialize(self):
         """Initialize LangSmith client and tracer"""
@@ -106,15 +108,18 @@ class LangSmithMonitor:
             session_id: Unique session identifier
             
         Returns:
-            Run ID for tracking, or None if disabled
+            Run ID for tracking 
         """
         if not self.enabled or not self.client:
             return None
         
         try:
+            run_id = str(uuid.uuid4())
+            
             # Create a run for the entire teaching session
-            run = self.client.create_run(
-                name=f"teaching_session",
+            self.client.create_run(
+                id=run_id,  # Pass our own ID
+                name=f"teaching_session_{session_id[:8]}",
                 run_type="chain",
                 inputs={
                     "topic": topic,
@@ -132,22 +137,10 @@ class LangSmithMonitor:
                 }
             )
             
-            # Get run ID - handle different return types
-            if run is None:
-                logger.warning("create_run returned None")
-                return None
+            # Store the mapping for later reference
+            self.run_id_map[session_id] = run_id
             
-            # Check if it's a Run object with id attribute
-            if hasattr(run, 'id'):
-                run_id = str(run.id)
-            # Or if it's a dict
-            elif isinstance(run, dict) and 'id' in run:
-                run_id = str(run['id'])
-            else:
-                logger.warning(f"Unexpected run type: {type(run)}")
-                return None
-            
-            logger.info(f"Started LangSmith tracking for session: {session_id}")
+            logger.info(f"Started LangSmith tracking for session: {session_id} (run: {run_id})")
             return run_id
             
         except Exception as e:
@@ -213,16 +206,22 @@ class LangSmithMonitor:
             return
         
         try:
+            # Generate unique ID for this agent run 
+            agent_run_id = str(uuid.uuid4())
+            
             # Determine run type based on agent
             run_type = "llm" if any(x in agent_name.lower() for x in ["llm", "gpt", "chat"]) else "tool"
             
             # Create child run for this agent
             run_data = {
+                "id": agent_run_id,  
                 "name": f"agent_{agent_name}",
                 "run_type": run_type,
                 "inputs": inputs,
                 "outputs": outputs,
                 "project_name": self.project_name,
+                "start_time": datetime.utcnow(),
+                "end_time": datetime.utcnow(),
                 "tags": ["agent", agent_name],
                 "extra": {
                     "agent_type": agent_name,
@@ -279,13 +278,16 @@ class LangSmithMonitor:
             
             # Attach to run if run_id provided
             if run_id:
-                self.client.create_feedback(
-                    run_id=run_id,
-                    key="teaching_quality",
-                    score=scores["overall_quality"],
-                    value="auto_evaluation",
-                    comment=f"Scores: {scores}"
-                )
+                try:
+                    self.client.create_feedback(
+                        run_id=run_id,
+                        key="teaching_quality",
+                        score=scores["overall_quality"],
+                        value="auto_evaluation",
+                        comment=f"Scores: {scores}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not attach feedback: {e}")
             
             logger.info(f"Session evaluation - Overall quality: {scores['overall_quality']:.2f}")
             return scores
@@ -397,8 +399,12 @@ class LangSmithMonitor:
             return
         
         try:
+            # Generate own run ID
+            metric_run_id = str(uuid.uuid4())
+            
             # Log to LangSmith as a run
             self.client.create_run(
+                id=metric_run_id,
                 name=f"metric_{metric_name}",
                 run_type="chain",
                 inputs={"metric_name": metric_name},
@@ -453,6 +459,9 @@ def trace_agent(agent_name: str):
             state = args[0] if args else kwargs.get('state')
             session_id = state.get('session_id') if isinstance(state, dict) else None
             
+            # Get parent run ID if we have it
+            parent_run_id = monitor.run_id_map.get(session_id) if session_id else None
+            
             # Start timing
             start_time = datetime.utcnow()
             
@@ -465,7 +474,7 @@ def trace_agent(agent_name: str):
                 
                 # Track execution
                 monitor.track_agent_execution(
-                    parent_run_id=session_id,
+                    parent_run_id=parent_run_id,
                     agent_name=agent_name,
                     inputs={"state_keys": list(state.keys()) if isinstance(state, dict) else []},
                     outputs={"success": True},
@@ -481,7 +490,7 @@ def trace_agent(agent_name: str):
                 
                 # Track failure
                 monitor.track_agent_execution(
-                    parent_run_id=session_id,
+                    parent_run_id=parent_run_id,
                     agent_name=agent_name,
                     inputs={"state_keys": list(state.keys()) if isinstance(state, dict) else []},
                     outputs={"error": str(e)},
