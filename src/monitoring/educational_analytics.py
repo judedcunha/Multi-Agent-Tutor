@@ -1,5 +1,5 @@
 """
-Educational Analytics Manager
+Educational Analytics Manager 
 Handles collection, storage, and retrieval of learning analytics
 """
 
@@ -30,6 +30,7 @@ class AnalyticsManager:
     """
     Manages educational analytics collection and retrieval
     All methods are synchronous and non-blocking using threading where needed
+   Now creates parent records (Student, LearningSession) before analytics
     """
     
     def __init__(self):
@@ -67,13 +68,42 @@ class AnalyticsManager:
         subject: str,
         level: str
     ) -> Dict[str, Any]:
-        """Record the start of a learning session (non-blocking)"""
+        """
+        Record the start of a learning session (non-blocking)
+        Creates Student and LearningSession records before analytics
+        """
         def _record():
             try:
-                # Create analytics entry
-                analytics_id = str(uuid.uuid4())
-                
                 with self.db_manager.get_session() as db:
+                    # STEP 1: Ensure Student exists (create if needed)
+                    student = db.query(Student).filter_by(student_id=student_id).first()
+                    if not student:
+                        student = Student(
+                            student_id=student_id,
+                            name=student_id,  # Use student_id as name if not provided
+                            level=level
+                        )
+                        db.add(student)
+                        db.flush()  # Flush to get the student record in DB
+                        logger.info(f"Created new student: {student_id}")
+                    
+                    # STEP 2: Create LearningSession record (PARENT TABLE)
+                    session = db.query(LearningSession).filter_by(session_id=session_id).first()
+                    if not session:
+                        session = LearningSession(
+                            session_id=session_id,
+                            student_id=student_id,
+                            topic=topic,
+                            subject=subject,
+                            level=level,
+                            started_at=datetime.utcnow()
+                        )
+                        db.add(session)
+                        db.flush()  # Flush to ensure session exists before analytics
+                        logger.info(f"Created learning session: {session_id}")
+                    
+                    # STEP 3: Create LearningAnalytics entry (CHILD TABLE)
+                    analytics_id = str(uuid.uuid4())
                     analytics = LearningAnalytics(
                         analytics_id=analytics_id,
                         session_id=session_id,
@@ -81,6 +111,8 @@ class AnalyticsManager:
                     )
                     db.add(analytics)
                     db.commit()
+                    
+                    logger.info(f"Analytics created for session: {session_id}")
                 
                 # Cache for real-time tracking
                 cache_key = f"analytics:session:{session_id}"
@@ -101,10 +133,12 @@ class AnalyticsManager:
                     ttl=86400  # 24 hours
                 )
                 
-                logger.info(f"Session started: {session_id} for student {student_id}")
+                logger.info(f"Session fully recorded: {session_id} for student {student_id}")
                 
             except Exception as e:
                 logger.error(f"Error recording session start: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
         
         # Execute in background thread (non-blocking)
         threading.Thread(target=_record, daemon=True).start()
@@ -123,12 +157,20 @@ class AnalyticsManager:
         time_spent: int,
         hints_used: int = 0
     ) -> Dict[str, Any]:
-        """Record a practice problem attempt (non-blocking)"""
+        """
+        Record a practice problem attempt (non-blocking)
+        """
         def _record():
             try:
                 practice_id = str(uuid.uuid4())
                 
                 with self.db_manager.get_session() as db:
+                    # SAFETY CHECK: Ensure session exists
+                    session = db.query(LearningSession).filter_by(session_id=session_id).first()
+                    if not session:
+                        logger.warning(f"Session {session_id} not found, skipping practice recording")
+                        return
+                    
                     # Record practice analytics
                     practice = PracticeAnalytics(
                         practice_id=practice_id,
@@ -172,6 +214,8 @@ class AnalyticsManager:
                 
             except Exception as e:
                 logger.error(f"Error recording practice attempt: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
         
         # Execute in background thread (non-blocking)
         threading.Thread(target=_record, daemon=True).start()
