@@ -28,13 +28,14 @@ pytest>=7.4.0
 pytest-asyncio>=0.21.0   # Async test support
 black>=23.0.0            # code formatting
 flake8>=6.0.0            # code quality
+asyncpg
 
 # Async Support
 nest-asyncio>=1.5.0      # Nested event loop support
 
 # Phase 1: Multi-Agent Orchestration
 langgraph>=0.0.40        # Multi-agent orchestration
-langsmith>=0.0.60        # Monitoring and tracing
+langsmith>=0.1.0        # Monitoring and tracing (updated for API compatibility)
 langchain>=1.0.0         # LangChain core 
 langchain-openai>=1.0.0  # OpenAI integration 
 langchain-community>=0.3.27  # Community integrations
