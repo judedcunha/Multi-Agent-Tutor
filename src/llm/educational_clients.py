@@ -264,10 +264,10 @@ class EducationalLLMManager:
                     )
                     return response['response']
                 
-                # Enforce request timeout (60 seconds)
+                # Enforce request timeout (300 seconds / 5 minutes)
                 content = await asyncio.wait_for(
                     asyncio.to_thread(_call_ollama),
-                    timeout=60.0
+                    timeout=300.0
                 )
                 elapsed = time.time() - start_time
                 
