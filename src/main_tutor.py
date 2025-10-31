@@ -24,6 +24,7 @@ from database.db_manager import db_manager, get_db
 from database.educational_crud import educational_crud, analytics_crud
 from optimization.educational_caching import cache_manager
 from monitoring.educational_analytics import analytics_manager
+from monitoring.langsmith_integration import langsmith_monitor, initialize_monitoring
 
 # Load environment variables
 load_dotenv()
@@ -71,6 +72,12 @@ async def lifespan(app: FastAPI):
         # Phase 3: Initialize analytics manager
         analytics_manager.initialize()
         logger.info("Analytics system initialized")
+        
+        # Phase 3: Initialize LangSmith monitoring
+        if initialize_monitoring():
+            logger.info("LangSmith monitoring initialized")
+        else:
+            logger.info("LangSmith monitoring disabled or unavailable")
         
     except Exception as e:
         logger.error(f"Failed to initialize systems: {str(e)}")
@@ -368,6 +375,7 @@ async def teach_advanced(request: AdvancedTeachingRequest):
     Advanced teaching endpoint using multi-agent system
     
     Uses LangGraph orchestration with specialized agents
+    LangSmith monitoring available
     """
     global advanced_system
     
@@ -394,11 +402,59 @@ async def teach_advanced(request: AdvancedTeachingRequest):
         else:
             profile = active_students[student_key]
         
+        # START LANGSMITH TRACING
+        session_id = f"session_{datetime.utcnow().timestamp()}"
+        run_id = None
+        
+        if langsmith_monitor.is_enabled():
+            # Start tracking this teaching session
+            run_id = langsmith_monitor.start_teaching_session(
+                topic=request.topic,
+                student_profile={
+                    "name": profile.name,
+                    "level": profile.level,
+                    "learning_style": profile.learning_style,
+                    "learning_goals": profile.learning_goals
+                },
+                session_id=session_id
+            )
+            logger.info(f"LangSmith tracking started: {run_id}")
+        
         # Run multi-agent teaching session
+        start_time = datetime.utcnow()
         teaching_session = advanced_system.teach_topic(
             topic=request.topic,
             student_profile=profile
         )
+        duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+        
+        # END LANGSMITH TRACING
+        if langsmith_monitor.is_enabled() and run_id:
+            # Complete the tracking
+            langsmith_monitor.end_teaching_session(
+                run_id=run_id,
+                outputs={
+                    "lesson_plan": teaching_session.get('lesson_plan'),
+                    "practice_count": len(teaching_session.get('practice_problems', [])),
+                    "agents_used": teaching_session.get('agents_involved', []),
+                    "duration_ms": duration_ms
+                },
+                success=True
+            )
+            
+            # Evaluate quality
+            quality_scores = langsmith_monitor.evaluate_teaching_session(
+                session_data={
+                    **teaching_session,
+                    "completed": True,
+                    "duration_minutes": duration_ms / 60000,
+                    "student_profile": {"level": profile.level, "learning_style": profile.learning_style}
+                },
+                run_id=run_id
+            )
+            
+            if quality_scores:
+                logger.info(f"Session quality: {quality_scores['overall_quality']:.2f}")
         
         return AdvancedTeachingResponse(
             status="success",
