@@ -583,7 +583,7 @@ class AnalyticsManager:
         practice_correct: int = 0,
         session_time_minutes: float = 0
     ) -> None:
-        """Update topic-level analytics"""
+        """Update topic-level analytics (None-safe for existing records)"""
         try:
             with self.db_manager.get_session() as db:
                 # Get or create topic analytics
@@ -600,36 +600,39 @@ class AnalyticsManager:
                     )
                     db.add(topic_stats)
                 
-                # Update metrics
-                topic_stats.request_count += 1
-                topic_stats.practice_attempted += practice_attempted
-                topic_stats.practice_correct += practice_correct
-                topic_stats.total_time_minutes += session_time_minutes
+                # Update metrics (None-safe for existing records with NULL values)
+                topic_stats.request_count = (topic_stats.request_count or 0) + 1
+                topic_stats.practice_attempted = (topic_stats.practice_attempted or 0) + practice_attempted
+                topic_stats.practice_correct = (topic_stats.practice_correct or 0) + practice_correct
+                topic_stats.total_time_minutes = (topic_stats.total_time_minutes or 0) + session_time_minutes
                 topic_stats.last_accessed = datetime.utcnow()
                 
-                # Calculate rates
-                if topic_stats.practice_attempted > 0:
-                    topic_stats.success_rate = (
-                        topic_stats.practice_correct / topic_stats.practice_attempted
-                    )
+                # Calculate rates (None-safe)
+                attempted = topic_stats.practice_attempted or 0
+                correct = topic_stats.practice_correct or 0
+                if attempted > 0:
+                    topic_stats.success_rate = correct / attempted
                 
-                if topic_stats.total_sessions > 0:
-                    topic_stats.avg_session_duration = (
-                        topic_stats.total_time_minutes / topic_stats.total_sessions
-                    )
+                total_sessions = topic_stats.total_sessions or 0
+                total_time = topic_stats.total_time_minutes or 0
+                if total_sessions > 0:
+                    topic_stats.avg_session_duration = total_time / total_sessions
                 
                 # Simple mastery calculation
-                if topic_stats.practice_attempted >= 5:
+                if attempted >= 5:
+                    success_rate = topic_stats.success_rate or 0
                     topic_stats.mastery_level = min(
                         1.0,
-                        topic_stats.success_rate * 0.7 + 
-                        min(topic_stats.total_sessions / 10, 0.3)
+                        success_rate * 0.7 + 
+                        min(total_sessions / 10, 0.3)
                     )
                 
                 db.commit()
                 
         except Exception as e:
             logger.error(f"Error updating topic analytics: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     def compute_daily_metrics(
         self,
