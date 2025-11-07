@@ -28,3 +28,5 @@ test_chroma_db/0582e106-a997-4408-a4cb-3fd32de44a82/header.bin
 test_chroma_db/0582e106-a997-4408-a4cb-3fd32de44a82/length.bin
 test_chroma_db/0582e106-a997-4408-a4cb-3fd32de44a82/link_lists.bin
 trash/
+tests/.archive/
+
