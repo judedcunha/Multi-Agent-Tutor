@@ -457,11 +457,7 @@ GET /system-status
 ### Run Tests
 ```bash
 # Full test suite
-cd tests
-python test_educational_system.py
-
-# Or with pytest
-pytest test_educational_system.py -v
+pytest
 
 ```
 
