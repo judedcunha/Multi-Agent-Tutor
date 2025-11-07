@@ -72,6 +72,10 @@ class EducationalRAG:
             try:
                 self.collection = self.chroma_client.get_collection(name=collection_name)
                 logger.info(f"Loaded existing collection: {collection_name}")
+                
+                # CRITICAL: Rebuild BM25 index from existing documents
+                self._rebuild_bm25_from_collection()
+                
             except:
                 self.collection = self.chroma_client.create_collection(
                     name=collection_name,
@@ -150,6 +154,51 @@ class EducationalRAG:
         ]
         
         return tokens
+    
+    def _rebuild_bm25_from_collection(self):
+        """
+        Rebuild BM25 index from existing ChromaDB collection
+        Called on startup to ensure BM25 is synchronized with ChromaDB
+        """
+        if not hasattr(self, 'BM25Okapi') or not self.collection:
+            return
+        
+        try:
+            # Get all documents from collection
+            result = self.collection.get(
+                include=['documents', 'metadatas']
+            )
+            
+            if result and result['documents']:
+                documents = result['documents']
+                metadatas = result['metadatas'] if result['metadatas'] else [{}] * len(documents)
+                ids = result['ids'] if result['ids'] else [f"doc_{i}" for i in range(len(documents))]
+                
+                # Clear existing BM25 data
+                self.bm25_corpus = []
+                self.bm25_documents = []
+                self.bm25_metadatas = []
+                self.bm25_ids = []
+                
+                # Rebuild BM25 corpus
+                for doc_text, metadata, doc_id in zip(documents, metadatas, ids):
+                    tokenized_doc = self._tokenize(doc_text)
+                    self.bm25_corpus.append(tokenized_doc)
+                    self.bm25_documents.append(doc_text)
+                    self.bm25_metadatas.append(metadata)
+                    self.bm25_ids.append(doc_id)
+                
+                # Build BM25 index
+                self._build_bm25_index()
+                
+                logger.info(f"Rebuilt BM25 index from {len(documents)} existing documents")
+            else:
+                logger.info("No existing documents found - BM25 index will be built when content is added")
+                
+        except Exception as e:
+            logger.error(f"Failed to rebuild BM25 from collection: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     def _build_bm25_index(self):
         """Build or rebuild the BM25 index from current corpus"""

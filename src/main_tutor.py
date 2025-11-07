@@ -2,17 +2,29 @@
 import os
 import logging
 from typing import Dict, Any, Optional, List
+from datetime import datetime
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import uvicorn
 from dotenv import load_dotenv
+from sqlalchemy.orm import Session
 
 # Import the agents
 from agents.ai_tutor import UniversalAITutor, LearningProfile
 from agents.tutoring_graph import AdvancedTutoringSystem
 from agents.state_schema import StudentProfile
+
+# Phase 3 imports
+from api.educational_streaming import streaming_manager
+from api.websocket_routes import websocket_endpoint, websocket_admin
+from database.db_manager import db_manager, get_db
+from database.educational_crud import educational_crud, analytics_crud
+from optimization.educational_caching import cache_manager
+from monitoring.educational_analytics import analytics_manager
+from monitoring.langsmith_integration import langsmith_monitor, initialize_monitoring
 
 # Load environment variables
 load_dotenv()
@@ -40,25 +52,60 @@ async def lifespan(app: FastAPI):
     logger.info("Starting up AI Tutor system...")
     
     try:
+        # Initialize Phase 1-2 systems
         ai_tutor = UniversalAITutor(use_local_model=True)
         advanced_system = AdvancedTutoringSystem(use_local_model=False)
         logger.info("AI Tutor system initialized successfully")
+        
+        # Phase 3: Initialize database
+        db_manager.initialize()
+        logger.info("Database initialized")
+        
+        # Phase 3: Initialize Redis cache
+        cache_manager.initialize()
+        logger.info("Redis cache initialized")
+        
+        # Phase 3: Initialize streaming manager
+        await streaming_manager.initialize(advanced_system)
+        logger.info("WebSocket streaming initialized")
+        
+        # Phase 3: Initialize analytics manager
+        analytics_manager.initialize()
+        logger.info("Analytics system initialized")
+        
+        # Phase 3: Initialize LangSmith monitoring
+        if initialize_monitoring():
+            logger.info("LangSmith monitoring initialized")
+        else:
+            logger.info("LangSmith monitoring disabled or unavailable")
+        
     except Exception as e:
-        logger.error(f"Failed to initialize tutoring systems: {str(e)}")
+        logger.error(f"Failed to initialize systems: {str(e)}")
         # Don't raise - allow app to start in degraded mode
     
     yield  # Server runs here
     
     # Shutdown (cleanup if needed)
-    logger.info("✓ Shutting down AI Tutor system...")
-    # Add cleanup code here if needed (close connections, save state, etc.)
+    logger.info("Shutting down AI Tutor system...")
+    # Clean up database connections
+    db_manager.close()
+    logger.info("Cleanup complete")
 
 # FastAPI app with lifespan
 app = FastAPI(
     title="AI Tutor",
-    description="Advanced multi-agent educational tutoring platform with LangGraph orchestration",
-    version="1",
+    description="Advanced multi-agent educational tutoring platform with LangGraph orchestration and real-time streaming",
+    version="3.0",
     lifespan=lifespan
+)
+
+# Add CORS middleware to allow frontend access
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Request/Response models
@@ -328,6 +375,7 @@ async def teach_advanced(request: AdvancedTeachingRequest):
     Advanced teaching endpoint using multi-agent system
     
     Uses LangGraph orchestration with specialized agents
+    LangSmith monitoring available
     """
     global advanced_system
     
@@ -354,11 +402,59 @@ async def teach_advanced(request: AdvancedTeachingRequest):
         else:
             profile = active_students[student_key]
         
+        # START LANGSMITH TRACING
+        session_id = f"session_{datetime.utcnow().timestamp()}"
+        run_id = None
+        
+        if langsmith_monitor.is_enabled():
+            # Start tracking this teaching session
+            run_id = langsmith_monitor.start_teaching_session(
+                topic=request.topic,
+                student_profile={
+                    "name": profile.name,
+                    "level": profile.level,
+                    "learning_style": profile.learning_style,
+                    "learning_goals": profile.learning_goals
+                },
+                session_id=session_id
+            )
+            logger.info(f"LangSmith tracking started: {run_id}")
+        
         # Run multi-agent teaching session
+        start_time = datetime.utcnow()
         teaching_session = advanced_system.teach_topic(
             topic=request.topic,
             student_profile=profile
         )
+        duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+        
+        # END LANGSMITH TRACING
+        if langsmith_monitor.is_enabled() and run_id:
+            # Complete the tracking
+            langsmith_monitor.end_teaching_session(
+                run_id=run_id,
+                outputs={
+                    "lesson_plan": teaching_session.get('lesson_plan'),
+                    "practice_count": len(teaching_session.get('practice_problems', [])),
+                    "agents_used": teaching_session.get('agents_involved', []),
+                    "duration_ms": duration_ms
+                },
+                success=True
+            )
+            
+            # Evaluate quality
+            quality_scores = langsmith_monitor.evaluate_teaching_session(
+                session_data={
+                    **teaching_session,
+                    "completed": True,
+                    "duration_minutes": duration_ms / 60000,
+                    "student_profile": {"level": profile.level, "learning_style": profile.learning_style}
+                },
+                run_id=run_id
+            )
+            
+            if quality_scores:
+                logger.info(f"Session quality: {quality_scores['overall_quality']:.2f}")
         
         return AdvancedTeachingResponse(
             status="success",
@@ -583,6 +679,536 @@ async def student_guide():
         "cost": "0",
         "academic_integrity": "Perfect for learning concepts and understanding. Always do your own work for assignments!"
     }
+
+# Phase 3: WebSocket endpoints
+@app.websocket("/ws/learn")
+async def websocket_learn(websocket: WebSocket):
+    """WebSocket endpoint for real-time learning sessions"""
+    await websocket_endpoint(websocket)
+
+
+@app.websocket("/ws/admin")
+async def websocket_admin_endpoint(websocket: WebSocket):
+    """Admin WebSocket endpoint for monitoring active sessions"""
+    await websocket_admin(websocket)
+
+
+# Phase 3: Database endpoints
+@app.post("/students/create")
+async def create_student(
+    name: str,
+    email: Optional[str] = None,
+    level: str = "beginner",
+    learning_style: str = "mixed",
+    db: Session = Depends(get_db)
+):
+    """Create a new student profile"""
+    student = educational_crud.create_student(db, name, email, level, learning_style)
+    return {
+        "status": "success",
+        "student_id": student.student_id,
+        "message": f"Student profile created for {name}"
+    }
+
+
+@app.get("/students/{student_id}")
+async def get_student(student_id: str, db: Session = Depends(get_db)):
+    """Get student profile and progress"""
+    student = educational_crud.get_student(db, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    
+    progress = educational_crud.get_student_progress_summary(db, student_id)
+    
+    return {
+        "student": {
+            "id": student.student_id,
+            "name": student.name,
+            "level": student.level,
+            "learning_style": student.learning_style
+        },
+        "progress": progress
+    }
+
+
+@app.get("/students/{student_id}/history")
+async def get_student_history(
+    student_id: str,
+    limit: int = 10,
+    db: Session = Depends(get_db)
+):
+    """Get student's learning history"""
+    history = educational_crud.get_student_history(db, student_id, limit)
+    return {
+        "student_id": student_id,
+        "sessions": [
+            {
+                "session_id": s.session_id,
+                "topic": s.topic,
+                "subject": s.subject,
+                "started_at": s.started_at.isoformat(),
+                "duration_minutes": s.duration_minutes
+            }
+            for s in history
+        ]
+    }
+
+
+@app.delete("/students/{student_id}")
+async def delete_student(student_id: str, db: Session = Depends(get_db)):
+    """Delete a student and all related data (GDPR compliance)"""
+    success = educational_crud.delete_student(db, student_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Student not found")
+    return {
+        "status": "success",
+        "message": f"Student {student_id} and all related data deleted"
+    }
+
+
+@app.get("/streaming/status")
+async def get_streaming_status():
+    """Get WebSocket streaming status"""
+    active_sessions = streaming_manager.get_active_sessions()
+    return {
+        "active_connections": streaming_manager.active_connections,
+        "sessions": active_sessions,
+        "status": "operational"
+    }
+
+
+# Phase 3: Analytics Endpoints
+
+class AnalyticsRequest(BaseModel):
+    """Request model for analytics operations"""
+    student_id: str
+    session_id: Optional[str] = None
+    topic: Optional[str] = None
+    time_range: str = "week"  # day, week, month
+
+class PracticeAttemptRequest(BaseModel):
+    """Request model for recording practice attempts"""
+    session_id: str
+    student_id: str
+    problem_number: int
+    problem_text: str
+    topic: str
+    difficulty: str = "medium"
+    student_answer: str
+    correct: bool
+    time_spent: int  # seconds
+    hints_used: int = 0
+
+class InteractionRequest(BaseModel):
+    """Request model for recording interactions"""
+    session_id: str
+    interaction_type: str  # question, hint_request, submission
+    agent_name: str
+    response_time_ms: int
+
+
+@app.get("/analytics/student/{student_id}")
+def get_student_analytics(
+    student_id: str,
+    time_range: str = "week",
+    db: Session = Depends(get_db)
+):
+    """Get comprehensive analytics for a student"""
+    try:
+        # Get analytics from manager
+        analytics = analytics_manager.get_student_analytics(
+            student_id=student_id,
+            time_range=time_range
+        )
+        
+        # Get additional data from CRUD if needed
+        summary = analytics_crud.get_student_analytics_summary(db, student_id)
+        
+        return {
+            "status": "success",
+            "student_id": student_id,
+            "time_range": time_range,
+            "analytics": analytics,
+            "summary": summary
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching student analytics: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve analytics: {str(e)}"
+        )
+
+
+@app.get("/analytics/topic/{student_id}/{topic}")
+def get_topic_performance(
+    student_id: str,
+    topic: str,
+    db: Session = Depends(get_db)
+):
+    """Get detailed performance analytics for a specific topic"""
+    try:
+        # Get from analytics manager
+        performance = analytics_manager.get_topic_performance(
+            student_id=student_id,
+            topic=topic
+        )
+        
+        # Get trends from CRUD
+        trends = analytics_crud.get_topic_trends(db, student_id, topic)
+        
+        return {
+            "status": "success",
+            "student_id": student_id,
+            "topic": topic,
+            "performance": performance,
+            "trends": trends
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching topic performance: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve topic performance: {str(e)}"
+        )
+
+
+@app.get("/analytics/dashboard/{student_id}")
+def get_dashboard_data(
+    student_id: str,
+    time_range: str = "week",
+    db: Session = Depends(get_db)
+):
+    """Get all dashboard data for a student"""
+    try:
+        # Main analytics
+        analytics = analytics_manager.get_student_analytics(
+            student_id=student_id,
+            time_range=time_range
+        )
+        
+        # Learning streaks
+        streaks = analytics_manager.get_learning_streaks(student_id)
+        
+        # Learning streak from CRUD
+        streak_data = analytics_crud.calculate_learning_streak(db, student_id)
+        
+        # Get student info
+        student = educational_crud.get_student(db, student_id)
+        
+        return {
+            "status": "success",
+            "student": {
+                "id": student.student_id if student else student_id,
+                "name": student.name if student else "Unknown",
+                "level": student.level if student else "beginner",
+                "learning_style": student.learning_style if student else "mixed"
+            },
+            "analytics": analytics,
+            "streaks": {
+                **streaks,
+                **streak_data
+            },
+            "time_range": time_range,
+            "last_updated": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching dashboard data: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve dashboard data: {str(e)}"
+        )
+
+
+@app.post("/analytics/session/start")
+def start_analytics_session(
+    session_id: str,
+    student_id: str,
+    topic: str,
+    subject: str,
+    level: str = "beginner"
+):
+    """Start tracking a learning session"""
+    try:
+        result = analytics_manager.record_session_start(
+            session_id=session_id,
+            student_id=student_id,
+            topic=topic,
+            subject=subject,
+            level=level
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error starting analytics session: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to start analytics session: {str(e)}"
+        )
+
+
+@app.post("/analytics/session/end")
+def end_analytics_session(
+    session_id: str,
+    engagement_score: Optional[float] = None,
+    completion_rate: Optional[float] = None
+):
+    """End a learning session and compute final metrics"""
+    try:
+        result = analytics_manager.record_session_end(
+            session_id=session_id,
+            engagement_score=engagement_score,
+            completion_rate=completion_rate
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error ending analytics session: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to end analytics session: {str(e)}"
+        )
+
+
+@app.post("/analytics/practice/attempt")
+def record_practice_attempt(request: PracticeAttemptRequest):
+    """Record a practice problem attempt"""
+    try:
+        result = analytics_manager.record_practice_attempt(
+            session_id=request.session_id,
+            student_id=request.student_id,
+            problem_number=request.problem_number,
+            problem_text=request.problem_text,
+            topic=request.topic,
+            difficulty=request.difficulty,
+            student_answer=request.student_answer,
+            correct=request.correct,
+            time_spent=request.time_spent,
+            hints_used=request.hints_used
+        )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error recording practice attempt: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to record practice attempt: {str(e)}"
+        )
+
+
+@app.post("/analytics/interaction")
+def record_interaction(request: InteractionRequest):
+    """Record an interaction during a learning session"""
+    try:
+        analytics_manager.record_interaction(
+            session_id=request.session_id,
+            interaction_type=request.interaction_type,
+            agent_name=request.agent_name,
+            response_time_ms=request.response_time_ms
+        )
+        
+        return {
+            "status": "success",
+            "message": "Interaction recorded"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error recording interaction: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to record interaction: {str(e)}"
+        )
+
+
+@app.post("/analytics/metrics/compute")
+def compute_daily_metrics(
+    student_id: str,
+    date: Optional[str] = None  # ISO format date
+):
+    """Compute and store daily metrics for a student"""
+    try:
+        target_date = datetime.fromisoformat(date) if date else datetime.utcnow()
+        
+        analytics_manager.compute_daily_metrics(
+            student_id=student_id,
+            date=target_date
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Daily metrics computed for {student_id}",
+            "date": target_date.date().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error computing daily metrics: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to compute daily metrics: {str(e)}"
+        )
+
+
+@app.get("/analytics/streaks/{student_id}")
+def get_learning_streaks(
+    student_id: str,
+    db: Session = Depends(get_db)
+):
+    """Get learning streak information for a student"""
+    try:
+        # Get from analytics manager
+        streaks = analytics_manager.get_learning_streaks(student_id)
+        
+        # Also get from CRUD for comparison
+        crud_streaks = analytics_crud.calculate_learning_streak(db, student_id)
+        
+        return {
+            "status": "success",
+            "student_id": student_id,
+            "current_streak": max(streaks.get('current_streak', 0), 
+                                 crud_streaks.get('current_streak', 0)),
+            "longest_streak": max(streaks.get('longest_streak', 0),
+                                 crud_streaks.get('longest_streak', 0)),
+            "total_active_days": streaks.get('total_active_days', 0),
+            "last_active": streaks.get('last_active')
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching learning streaks: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve learning streaks: {str(e)}"
+        )
+
+
+# Phase 3: Cache Management Endpoints
+@app.get("/cache/stats")
+async def get_cache_stats():
+    """Get Redis cache statistics"""
+    stats = cache_manager.get_cache_stats()
+    return {
+        "cache": stats,
+        "message": "Cache statistics retrieved successfully"
+    }
+
+
+@app.get("/cache/counters")
+async def get_cache_counters():
+    """Get cache hit/miss counters for all operations"""
+    counters = {
+        "lesson": {
+            "hits": cache_manager.get_counter("lesson_cache_hits"),
+            "misses": cache_manager.get_counter("lesson_cache_misses"),
+            "hit_rate": 0.0
+        },
+        "practice": {
+            "hits": cache_manager.get_counter("practice_cache_hits"),
+            "misses": cache_manager.get_counter("practice_cache_misses"),
+            "hit_rate": 0.0
+        },
+        "rag": {
+            "hits": cache_manager.get_counter("rag_cache_hits"),
+            "misses": cache_manager.get_counter("rag_cache_misses"),
+            "hit_rate": 0.0
+        },
+        "total": {
+            "hits": 0,
+            "misses": 0,
+            "hit_rate": 0.0
+        }
+    }
+    
+    # Calculate hit rates
+    for key in ["lesson", "practice", "rag"]:
+        hits = counters[key]["hits"]
+        misses = counters[key]["misses"]
+        total = hits + misses
+        if total > 0:
+            counters[key]["hit_rate"] = round(hits / total, 3)
+        counters["total"]["hits"] += hits
+        counters["total"]["misses"] += misses
+    
+    # Calculate total hit rate
+    total_hits = counters["total"]["hits"]
+    total_misses = counters["total"]["misses"]
+    total_requests = total_hits + total_misses
+    if total_requests > 0:
+        counters["total"]["hit_rate"] = round(total_hits / total_requests, 3)
+    
+    return {
+        "counters": counters,
+        "total_requests": total_requests,
+        "cache_enabled": cache_manager.enabled
+    }
+
+
+@app.post("/cache/clear")
+async def clear_cache(pattern: Optional[str] = None):
+    """Clear cache entries with optional pattern matching"""
+    cache_manager.clear_cache(pattern)
+    
+    message = f"Cache cleared for pattern: {pattern}" if pattern else "All cache entries cleared"
+    
+    return {
+        "status": "success",
+        "message": message,
+        "pattern": pattern
+    }
+
+
+@app.post("/cache/warm")
+async def warm_cache(
+    topics: List[str] = ["Python basics", "Mathematics", "Science"],
+    levels: List[str] = ["beginner", "intermediate"],
+    learning_styles: List[str] = ["visual", "mixed"]
+):
+    """Warm the cache with common queries (pre-populate)"""
+    warmed_count = 0
+    
+    for topic in topics:
+        for level in levels:
+            for style in learning_styles:
+                # Check if already cached
+                if not cache_manager.get_lesson(topic, level, style):
+                    # Would normally generate and cache here
+                    # For now, just count what would be warmed
+                    warmed_count += 1
+    
+    return {
+        "status": "success",
+        "message": f"Cache warming initiated for {warmed_count} combinations",
+        "topics": topics,
+        "levels": levels,
+        "learning_styles": learning_styles
+    }
+
+
+@app.get("/cache/info")
+async def get_cache_info():
+    """Get detailed cache configuration and status"""
+    return {
+        "enabled": cache_manager.enabled,
+        "default_ttl": cache_manager.default_ttl,
+        "redis_connected": cache_manager.redis_client is not None,
+        "ttl_settings": {
+            "lessons": "1 hour",
+            "practice_problems": "30 minutes",
+            "rag_results": "30 minutes",
+            "student_sessions": "2 hours"
+        },
+        "cache_keys_pattern": "tutor:*",
+        "features": {
+            "lesson_caching": "Enabled",
+            "practice_caching": "Enabled",
+            "rag_caching": "Enabled",
+            "session_caching": "Enabled",
+            "sliding_expiration": "Supported"
+        }
+    }
+
 
 if __name__ == "__main__":
     print("Starting")

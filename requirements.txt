@@ -29,12 +29,13 @@ pytest-asyncio>=0.21.0   # Async test support
 black>=23.0.0            # code formatting
 flake8>=6.0.0            # code quality
 
+
 # Async Support
 nest-asyncio>=1.5.0      # Nested event loop support
 
 # Phase 1: Multi-Agent Orchestration
 langgraph>=0.0.40        # Multi-agent orchestration
-langsmith>=0.0.60        # Monitoring and tracing
+langsmith>=0.1.0        # Monitoring and tracing (updated for API compatibility)
 langchain>=1.0.0         # LangChain core 
 langchain-openai>=1.0.0  # OpenAI integration 
 langchain-community>=0.3.27  # Community integrations
@@ -54,9 +55,11 @@ sympy>=1.12              # Symbolic math for Math Tutor
 matplotlib>=3.7.0        # Visualizations
 plotly>=5.17.0          # Interactive charts
 
-# PHASE 3: Production Infrastructure (To be added) 
-# redis>=5.0.0
-# psycopg2-binary>=2.9.0
-# sqlalchemy>=2.0.0
-# alembic>=1.12.0
-# websockets>=11.0
+
+# PHASE 3: Production Infrastructure
+redis>=5.0.0
+psycopg2-binary>=2.9.0
+sqlalchemy>=2.0.0
+alembic>=1.12.0
+websockets>=11.0
+asyncpg

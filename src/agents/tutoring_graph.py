@@ -41,6 +41,13 @@ except ImportError:
     logger.warning("RAG system not available - install with: pip install chromadb sentence-transformers")
     RAG_AVAILABLE = False
 
+try:
+    from monitoring.educational_analytics import analytics_manager
+    ANALYTICS_AVAILABLE = True
+except ImportError:
+    logger.warning("Analytics system not available")
+    ANALYTICS_AVAILABLE = False
+
 
 class AdvancedTutoringSystem:
     """
@@ -129,12 +136,14 @@ class AdvancedTutoringSystem:
         # Validate configuration AFTER initialization
         self._validate_configuration(enable_llm, enable_specialized_agents, enable_advanced_rag)
         
-        # Create educational nodes (pass Phase 2 components)
+        # Create educational nodes (pass Phase 2 & 3 components)
+        self.analytics = analytics_manager if ANALYTICS_AVAILABLE else None
         self.nodes = create_educational_nodes(
             self.tutor,
             llm_manager=self.llm_manager,
             specialized_agents=self.specialized_agents,
-            rag_system=self.rag_system
+            rag_system=self.rag_system,
+            analytics_manager=self.analytics
         )
         
         # Build the tutoring graph

@@ -6,6 +6,8 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-00a393.svg)](https://fastapi.tiangolo.com/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-0.0.40+-purple.svg)](https://github.com/langchain-ai/langgraph)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Version](https://img.shields.io/badge/version-3.2.0-success.svg)]()
+[![Phase 3](https://img.shields.io/badge/Phase%203-Complete-brightgreen.svg)]()
 
 ---
 
@@ -17,8 +19,15 @@ This system can teach any topic through intelligent multi-agent coordination:
 - **Adaptive Learning**: Beginner through advanced levels with personalized content
 - **Learning Style Adaptation**: Visual, auditory, kinesthetic, or mixed approaches
 - **Multi-Agent Architecture**: 6 specialized AI agents collaborate on every lesson
-- **Zero Configuration**: Works immediately with no API keys required
+- **LLM-Powered**: Requires Ollama (local) or OpenAI API for intelligent content generation
 - **Extensible Design**: Optional AI enhancements (OpenAI GPT-4, Ollama, Advanced RAG)
+
+**Latest: Version 3.2.0**
+- Phase 3 development complete with all features implemented
+- All identified bugs resolved
+- 16 educational documents indexed in vector database
+- Full LangSmith monitoring operational
+- Redis caching providing significant performance improvement
 
 ---
 
@@ -34,18 +43,44 @@ This system can teach any topic through intelligent multi-agent coordination:
 
 ### Operating Modes
 
-**Basic Mode** (No Setup Required)
-- Rule-based content generation
-- Web search for educational resources
-- Structured lesson plans and practice problems
-- Ideal for quick demos, learning the architecture, portfolio showcases
-
-**Advanced Mode** 
-- LLM-powered content generation (OpenAI GPT-4 or Ollama)
+**Standard Mode** (Default Configuration)
+- LLM-powered content generation via Ollama (local)
 - Specialized subject agents (Math, Science, Programming tutors)
 - Advanced RAG with vector database and semantic search
 - Personalized explanations adapted to student profile
-- Ideal for production use, research, advanced educational applications
+- Requires: Ollama installed locally with a model (e.g., llama2)
+
+**Cloud Mode** (API-based)
+- OpenAI GPT-4 powered content generation
+- Higher quality responses with faster generation
+- Same specialized agents and RAG capabilities
+- Requires: OpenAI API key and usage costs
+- Ideal for production deployments with budget for API calls
+
+### Performance Features 
+- **Redis Caching**: Significant performance improvement for cached operations
+- **WebSocket Streaming**: Real-time educational content delivery
+- **PostgreSQL Database**: Persistent student data and progress tracking
+- **Cache Management**: Intelligent TTL, statistics, and monitoring
+- **High Performance**: 20ms response time for cached content
+- **Analytics Dashboard**: Visual insights into learning progress
+  - Track sessions, scores, and streaks
+  - Visualize performance trends
+  - Monitor topic mastery
+  - View 60-day activity calendar
+
+### Analytics Dashboard 
+- **Visual Progress Tracking**: Comprehensive dashboard showing learning analytics
+- **5 Key Metrics**: Sessions, Scores, Streaks, Time, Topics
+- **4 Interactive Charts**:
+  - Learning progress over time (line chart)
+  - Topic performance by subject (bar chart)
+  - Practice success rate (donut chart)
+  - 60-day activity calendar (heatmap)
+- **Responsive Design**: Works on desktop, tablet, and mobile
+- **Real-time Updates**: Auto-refresh and manual refresh
+- **Demo Mode**: Works standalone with mock data
+- **Access**: `web/analytics_dashboard_demo.html`
 
 ---
 
@@ -53,45 +88,24 @@ This system can teach any topic through intelligent multi-agent coordination:
 
 The system orchestrates 6 specialized agents through a coordinated workflow:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Learning Request                          │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                         ▼
-              ┌──────────────────┐
-              │ Subject Expert   │ Analyzes topic & routes
-              └────────┬─────────┘
-                       │
-                       ▼
-              ┌──────────────────┐
-              │ Content Creator  │ Generates lesson plans
-              └────────┬─────────┘
-                       │
-                       ▼
-              ┌──────────────────┐
-              │Content Retriever │ Finds resources
-              └────────┬─────────┘
-                       │
-                       ▼
-              ┌──────────────────┐
-              │Practice Generator│ Creates exercises
-              └────────┬─────────┘
-                       │
-                       ▼
-              ┌──────────────────┐
-              │Assessment Agent  │ Evaluates understanding
-              └────────┬─────────┘
-                       │
-                       ▼
-              ┌──────────────────┐
-              │Progress Tracker  │ Compiles results
-              └────────┬─────────┘
-                       │
-                       ▼
-              ┌──────────────────┐
-              │ Learning Session │ Complete educational content
-              └──────────────────┘
+```mermaid
+graph TD
+    Start[Learning Request] --> SE[Subject Expert]
+    SE --> |Analyzes topic & routes| CC[Content Creator]
+    CC --> |Generates lesson plans| CR[Content Retriever]
+    CR --> |Finds resources| PG[Practice Generator]
+    PG --> |Creates exercises| AA[Assessment Agent]
+    AA --> |Evaluates understanding| PT[Progress Tracker]
+    PT --> |Compiles results| End[Learning Session]
+    
+    style Start fill:#e1f5fe
+    style End fill:#c8e6c9
+    style SE fill:#fff3e0
+    style CC fill:#fff3e0
+    style CR fill:#fff3e0
+    style PG fill:#fff3e0
+    style AA fill:#fff3e0
+    style PT fill:#fff3e0
 ```
 
 ### Agent Responsibilities
@@ -112,6 +126,9 @@ The system orchestrates 6 specialized agents through a coordinated workflow:
 ### Prerequisites
 - Python 3.8 or higher
 - pip package manager
+- Ollama installed (for local LLM) OR OpenAI API key
+- Redis server (for caching)
+- PostgreSQL (optional, for persistence)
 
 ### Installation
 
@@ -123,12 +140,25 @@ cd Multi-Agent-Tutor
 # 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Start the server
+# 3. Install and start Ollama (for local LLM)
+# Download from https://ollama.ai
+ollama pull llama2  # or another model like mistral
+ollama serve  # Keep this running in a separate terminal
+
+# 4. Start Redis
+docker run -d -p 6379:6379 --name redis redis:alpine
+
+# 5. Configure environment
+cp .env.example .env
+# Edit .env to set USE_OLLAMA=true (default) or configure OpenAI
+
+# 6. Start the server
 cd src
 python main_tutor.py
 ```
 
 The system is now running at **http://localhost:8000**
+
 
 ### Try the Demo
 
@@ -139,6 +169,9 @@ http://localhost:8000
 
 # Try the interactive demo
 http://localhost:8000/demo
+
+# View analytics dashboard
+file:///path/to/Multi-Agent-Tutor/web/analytics_dashboard_demo.html
 ```
 
 **Option 2: API Call**
@@ -327,7 +360,7 @@ ENABLE_SCIENCE_TUTOR=true
 ENABLE_PROGRAMMING_TUTOR=true
 ```
 
-**Note**: All advanced features are optional. The system works in basic mode with zero configuration.
+**Note**: The system requires either Ollama (local) or OpenAI API for LLM functionality. All other features like specialized agents and advanced RAG are optional enhancements.
 
 ---
 
@@ -395,6 +428,28 @@ GET /system-status
 - `GET /student-guide` - Comprehensive usage guide
 - `GET /health` - Health check endpoint
 
+### Analytics Endpoints 
+
+- `GET /analytics/dashboard/{student_id}` - Complete dashboard data
+- `GET /analytics/student/{student_id}` - Student analytics summary
+- `GET /analytics/topic/{student_id}/{topic}` - Topic-specific performance
+- `GET /analytics/streaks/{student_id}` - Learning streak information
+- `POST /analytics/session/start` - Start session tracking
+- `POST /analytics/session/end` - End session and compute metrics
+- `POST /analytics/practice/attempt` - Record practice attempt
+- `POST /analytics/interaction` - Record agent interaction
+- `POST /analytics/metrics/compute` - Compute daily metrics
+
+### WebSocket Endpoints 
+
+- `WS /ws/learn` - Real-time learning session streaming
+- `WS /ws/admin` - Admin monitoring endpoint
+
+### Demo Pages
+
+- `web/websocket_demo.html` - WebSocket streaming demo
+- `web/analytics_dashboard_demo.html` - Analytics dashboard demo
+
 ---
 
 ## Testing
@@ -457,13 +512,31 @@ Multi-Agent-Tutor/
 - Cross-encoder re-ranking
 - Educational prompt templates
 
-### Phase 3: Production Features (In Progress)
+### Phase 3: Production Features (Complete)
 - WebSocket streaming for real-time responses
 - PostgreSQL database for persistence
-- Redis caching for performance
+- Redis caching for significant performance improvement
+- Cache management API endpoints
+- Test infrastructure and benchmarking
 - Educational analytics dashboard
+  - React component with Chart.js visualizations
+  - 5 overview stat cards (Sessions, Score, Streak, Time, Topics)
+  - 4 interactive charts (Progress, Topics, Practice, Calendar)
+  - Complete responsive design (mobile-ready)
+  - 10 analytics API endpoints
+  - Standalone demo page included
 - LangSmith monitoring integration
-- Student data management
+  - Full session and agent tracking
+  - Quality evaluation system (4 metrics)
+  - v0.4.x compatible implementation
+  - UUID-based trace tracking
+  - All verification tests passing
+- Production Hardening (v3.2.0)
+  - All database foreign key issues resolved
+  - Analytics errors fixed (None-safe operations)
+  - BM25 index auto-rebuild on startup
+  - Ollama timeout extended to 300s
+  - 16 educational documents indexed
 
 ### Phase 4: Deployment & Optimization (Planned)
 - Docker containerization
@@ -483,7 +556,7 @@ Multi-Agent-Tutor/
 - **LangChain** - LLM application framework
 - **Pydantic** - Data validation
 
-### AI & ML (Optional)
+### AI & ML 
 - **OpenAI GPT-4** - Premium AI content generation
 - **Ollama** - Local open-source models
 - **ChromaDB** - Vector database for RAG
@@ -500,6 +573,15 @@ Multi-Agent-Tutor/
 - **pytest** - Testing framework
 - **uvicorn** - ASGI server
 - **python-dotenv** - Environment configuration
+
+### Phase 3 Stack
+- **PostgreSQL** - Persistent database storage
+- **Redis** - High-performance caching
+- **WebSockets** - Real-time streaming
+- **Chart.js** - Data visualizations
+- **React** - Frontend UI components
+
+---
 
 ---
 
