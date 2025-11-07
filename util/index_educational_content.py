@@ -9,7 +9,7 @@ import asyncio
 from datetime import datetime
 
 # Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.insert(0,os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -610,7 +610,7 @@ async def index_content():
     print("-" * 70)
     
     try:
-        stats = rag.get_search_statistics()
+        stats = await rag.get_search_statistics()
         print(f"Collection name: {stats.get('collection_name')}")
         print(f"Total documents: {stats.get('total_documents', 0)}")
         print(f"BM25 available: {stats.get('bm25_available', False)}")

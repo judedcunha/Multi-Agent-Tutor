@@ -13,7 +13,7 @@ import json
 import hashlib
 
 # Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
 from optimization.educational_caching import cache_manager
 from optimization.cache_decorators import cache_result, cache_lesson

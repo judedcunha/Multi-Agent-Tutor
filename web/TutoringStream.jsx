@@ -291,8 +291,12 @@ const TutoringStream = ({ serverUrl = 'ws://localhost:8000/ws/learn' }) => {
       clearTimeout(reconnectTimeoutRef.current);
       
       if (wsRef.current) {
-        wsRef.current.send(JSON.stringify({ type: 'disconnect' }));
-        wsRef.current.close();
+        if (wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: 'disconnect' }));
+        }
+        if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CLOSING) {
+          wsRef.current.close();
+        }
       }
     };
   }, [connect]);

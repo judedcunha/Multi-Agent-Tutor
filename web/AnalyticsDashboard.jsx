@@ -569,7 +569,7 @@ const AnalyticsDashboard = ({ serverUrl = 'http://localhost:8000' }) => {
                       outerRadius={100}
                       paddingAngle={2}
                       dataKey="value"
-                      label={({ percentage }) => `${percentage.toFixed(1)}%`}
+                      label={({ percent }) => `${(percent * 100).toFixed(1)}%`}
                       labelLine={true}
                     >
                       {analytics.practice_data.map((entry, index) => (

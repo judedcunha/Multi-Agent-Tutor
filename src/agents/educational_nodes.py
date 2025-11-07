@@ -224,10 +224,14 @@ class EducationalNodes:
             
             # Enable nested event loops
             nest_asyncio.apply()
-            
+                    
             try:
-                # Run async LLM call properly
-                loop = asyncio.get_event_loop()
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
                 explanation_text = loop.run_until_complete(
                     self.llm_manager.create_lesson_explanation(
                         topic=topic,
@@ -410,21 +414,6 @@ class EducationalNodes:
                         response_time_ms=response_time
                     )
                     
-                    # Also track that practice problems were generated
-                    # This helps with analytics on practice problem usage
-                    for i, problem in enumerate(practice_problems, 1):
-                        self.analytics_manager.record_practice_attempt(
-                            session_id=state['session_id'],
-                            student_id=state['student_profile'].get('name', 'unknown'),
-                            problem_number=i,
-                            problem_text=problem.get('question', ''),
-                            topic=topic,
-                            difficulty=problem.get('difficulty', 'medium'),
-                            student_answer='pending',  # Not yet attempted
-                            correct=False,  # Not yet attempted
-                            time_spent=0,  # Not yet attempted
-                            hints_used=0
-                        )
                 except Exception as e:
                     logger.debug(f"Failed to track interaction: {e}")
             # Update state
