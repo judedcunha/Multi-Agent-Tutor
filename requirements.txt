@@ -9,7 +9,7 @@ uvicorn[standard]>=0.24.0
 pydantic>=2.5.0          # data validation
 
 # Educational Content Sources 
-duckduckgo-search>=3.9.0  # educational web search 
+ddgs # educational web search 
 requests>=2.31.0         
 beautifulsoup4>=4.12.0   
 wikipedia
